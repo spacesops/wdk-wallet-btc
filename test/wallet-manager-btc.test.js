@@ -31,7 +31,7 @@ beforeAll(async () => {
 
 describe("WalletManagerBtc Signing and Transaction Tests", () => {
 
-  test("account attributes match BIP84 test vectors", async () => {
+  test("path and address match BIP84 test vectors", async () => {
     //Source: https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki#test-vectors
     const seedPhrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
     const walletManager = new WalletManagerBtc(seedPhrase, {
