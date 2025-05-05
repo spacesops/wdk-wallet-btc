@@ -5,6 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
+    "build:types": "tsc",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "lint": "standard",
     "lint:fix": "standard --fix"
@@ -18,7 +19,8 @@
   },
   "devDependencies": {
     "brittle": "^3.13.1",
-    "standard": "17.1.2"
+    "standard": "17.1.2",
+    "typescript": "^5.8.3"
   },
   "standard": {
     "ignore": [

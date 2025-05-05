@@ -18,6 +18,18 @@ import BigNumber from 'bignumber.js'
 
 const DUST_LIMIT = 546
 
+/**
+ * @typedef {Object} KeyPair
+ * @property {string} publicKey - The public key.
+ * @property {string} privateKey - The private key.
+ */
+
+/**
+ * @typedef {Object} BtcTransaction
+ * @property {string} to - The transaction's recipient.
+ * @property {number} value - The amount of bitcoins to send to the recipient (in satoshis).
+ */
+
 export default class WalletAccountBtc {
   #path
   #index
@@ -57,27 +69,21 @@ export default class WalletAccountBtc {
   }
 
   /**
-   * The account's address.
-   *
-   * @type {string}
-   */
-  get address () {
-    return this.#address
-  }
-
-  /**
-   * @typedef {Object} KeyPair
-   * @property {string} publicKey - The public key.
-   * @property {string} privateKey - The private key.
-   */
-
-  /**
    * The account's key pair.
    *
    * @type {KeyPair}
    */
   get keyPair () {
     return this.#keyPair
+  }
+
+  /**
+   * Returns the account's address.
+   *
+   * @returns {Promise<string>} The account's address.
+   */
+  async getAddress() {
+    return this.#address
   }
 
   /**
@@ -110,6 +116,23 @@ export default class WalletAccountBtc {
       return false
     }
   }
+
+  /**
+   * Sends a transaction with arbitrary data.
+   *
+   * @param {BtcTransaction} tx - The transaction to send.
+   * @returns {Promise<string>} The transaction's hash.
+   */
+    async sendTransaction ({ to, value }) {
+      const tx = await this.#createTransaction({ recipient: to, amount: value })
+      try {
+        await this.#broadcastTransaction(tx.hex)
+      } catch (err) {
+        console.log(err)
+        throw new Error('failed to broadcast tx')
+      }
+      return tx.txid
+    }
 
   async #createTransaction ({ recipient, amount }) {
     let feeRate
@@ -253,28 +276,5 @@ export default class WalletAccountBtc {
       console.error('Electrum broadcast error:', err)
       throw new Error('Failed to broadcast transaction: ' + err.message)
     }
-  }
-
-  /**
-   * @typedef {Object} Transaction
-   * @property {string} to - The transaction's recipient.
-   * @property {number} value - The amount of native tokens to send to the recipient.
-   */
-
-  /**
-   * Sends a transaction with arbitrary data.
-   *
-   * @param {Transaction} tx - The transaction to send.
-   * @returns {Promise<string>} The transaction's hash.
-   */
-  async sendTransaction ({ to, value }) {
-    const tx = await this.#createTransaction({ recipient: to, amount: value })
-    try {
-      await this.#broadcastTransaction(tx.hex)
-    } catch (err) {
-      console.log(err)
-      throw new Error('failed to broadcast tx')
-    }
-    return tx.txid
   }
 }
