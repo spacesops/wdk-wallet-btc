@@ -179,6 +179,11 @@ export default class ElectrumClient {
     return Buffer.from(hash).reverse().toString('hex')
   }
 
+  async getBalance (address) {
+    const scriptHash = this.getScriptHash(address)
+    return await this.#request('blockchain.scripthash.get_balance', [scriptHash])
+  }
+
   isConnected () {
     return this.#connected
   }

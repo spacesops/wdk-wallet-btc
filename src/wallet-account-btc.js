@@ -144,7 +144,8 @@ export default class WalletAccountBtc {
       throw new Error('Failed to estimate fee: ' + err.message)
     }
 
-    const utxoSet = await this.#collectUtxos(amount, this.address)
+    const addr = await this.getAddress()
+    const utxoSet = await this.#collectUtxos(amount, addr)
     return await this.#generateRawTx(
       utxoSet,
       amount,
@@ -206,7 +207,7 @@ export default class WalletAccountBtc {
       totalInput = totalInput.plus(utxo.value)
     }
 
-    const createPsbt = (fee) => {
+    const createPsbt = async (fee) => {
       const psbt = new Psbt({ network: this.#electrumClient.network })
 
       utxoSet.forEach((utxo, index) => {
@@ -233,9 +234,10 @@ export default class WalletAccountBtc {
       })
 
       const change = totalInput.minus(sendAmount).minus(fee)
+      const addr = await this.getAddress()
       if (change.isGreaterThan(DUST_LIMIT)) {
         psbt.addOutput({
-          address: this.address,
+          address: addr,
           value: change.toNumber()
         })
       } else if (change.isLessThan(0)) {
@@ -250,7 +252,7 @@ export default class WalletAccountBtc {
       return psbt
     }
 
-    let psbt = createPsbt(0)
+    let psbt = await createPsbt(0)
     const dummyTx = psbt.extractTransaction()
     let estimatedFee = new BigNumber(feeRate)
       .multipliedBy(dummyTx.virtualSize())
@@ -259,7 +261,7 @@ export default class WalletAccountBtc {
     const minRelayFee = new BigNumber(141)
     estimatedFee = BigNumber.max(estimatedFee, minRelayFee)
 
-    psbt = createPsbt(estimatedFee)
+    psbt = await createPsbt(estimatedFee)
     const tx = psbt.extractTransaction()
     const txHex = tx.toHex()
     const txId = tx.getId()
@@ -267,6 +269,18 @@ export default class WalletAccountBtc {
       txid: txId,
       hex: txHex
     }
+  }
+
+  #satsToBtc(sats) {
+    const SATOSHIS_PER_BTC = new BigNumber('100000000')
+    return new BigNumber(sats).dividedBy(SATOSHIS_PER_BTC).toFixed(8) 
+  }
+
+  async getBalance() {
+    const addr = await this.getAddress()
+    const res = await this.#electrumClient.getBalance(addr)
+    const btc = this.#satsToBtc(res.confirmed)
+    return +btc
   }
 
   async #broadcastTransaction (txHex) {

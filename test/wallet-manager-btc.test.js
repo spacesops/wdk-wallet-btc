@@ -40,9 +40,10 @@ describe("WalletManagerBtc Signing and Transaction Tests", () => {
       network: 'bitcoin',
     });
     const account = await walletManager.getAccount();
+    const addr = await account.getAddress()
     expect(account.keyPair.privateKey).toEqual("KyZpNDKnfs94vbrwhJneDi77V6jF64PWPF8x5cdJb8ifgg2DUc9d")
     expect(account.keyPair.publicKey).toEqual("0330d54fd0dd420a6e5f8d3624f5f3482cae350f79d5f0753bf5beef9c2d91af3c")
-    expect(account.address).toEqual("bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu")
+    expect(addr).toEqual("bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu")
     expect(account.path).toEqual("m/84'/0'/0'/0/0")
   });
   test("should sign a message", async () => {
@@ -83,6 +84,12 @@ describe("WalletManagerBtc Signing and Transaction Tests", () => {
 
   test("should return false for empty seed phrase", () => {
     expect(WalletManagerBtc.isValidSeedPhrase("")).toBe(false);
+  });
+  
+  test("should get address balance", async () => {
+    const account = await walletManager.getAccount();
+    const bal = await account.getBalance()
+    expect(typeof bal).toBe('number')
   });
 
   test(
