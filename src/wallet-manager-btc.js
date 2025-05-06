@@ -25,6 +25,13 @@ const BIP_84_BTC_DERIVATION_PATH = 'm/84\'/0\'/0\'/0'
 
 const bip32 = BIP32Factory(ecc)
 
+/**
+ * @typedef {Object} BtcWalletConfig
+ * @property {string} [host] - The electrum server's hostname (default: "electrum.blockstream.info").
+ * @property {number} [port] - The electrum server's port (default: 50001).
+ * @property {string} [network] - The name of the network to use; available values: "bitcoin", "regtest", "testnet" (default: "bitcoin").
+ */
+
 export default class WalletManagerBtc {
   #seedPhrase
   #electrumClient
@@ -33,10 +40,7 @@ export default class WalletManagerBtc {
    * Creates a new wallet manager for the bitcoin blockchain.
    *
    * @param {string} seedPhrase - The wallet's [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki) seed phrase.
-   * @param {Object} [config] - The configuration object.
-   * @param {string} [config.host] - The electrum server's hostname (default: "electrum.blockstream.info").
-   * @param {number} [config.port] - The electrum server's port (default: 50001).
-   * @param {string} [config.network] - The name of the network to use; available values: "bitcoin", "regtest", "testnet" (default: "bitcoin").
+   * @param {BtcWalletConfig} [config] - The configuration object.
    */
   constructor (seedPhrase, config = {}) {
     if (!WalletManagerBtc.isValidSeedPhrase(seedPhrase)) {

@@ -1,3 +1,9 @@
+/**
+ * @typedef {Object} BtcWalletConfig
+ * @property {string} [host] - The electrum server's hostname (default: "electrum.blockstream.info").
+ * @property {number} [port] - The electrum server's port (default: 50001).
+ * @property {string} [network] - The name of the network to use; available values: "bitcoin", "regtest", "testnet" (default: "bitcoin").
+ */
 export default class WalletManagerBtc {
     /**
      * Returns a random [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki) seed phrase.
@@ -16,16 +22,9 @@ export default class WalletManagerBtc {
      * Creates a new wallet manager for the bitcoin blockchain.
      *
      * @param {string} seedPhrase - The wallet's [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki) seed phrase.
-     * @param {Object} [config] - The configuration object.
-     * @param {string} [config.host] - The electrum server's hostname (default: "electrum.blockstream.info").
-     * @param {number} [config.port] - The electrum server's port (default: 50001).
-     * @param {string} [config.network] - The name of the network to use; available values: "bitcoin", "regtest", "testnet" (default: "bitcoin").
+     * @param {BtcWalletConfig} [config] - The configuration object.
      */
-    constructor(seedPhrase: string, config?: {
-        host?: string;
-        port?: number;
-        network?: string;
-    });
+    constructor(seedPhrase: string, config?: BtcWalletConfig);
     /**
      * The seed phrase of the wallet.
      *
@@ -44,4 +43,18 @@ export default class WalletManagerBtc {
     getAccount(index?: number): Promise<WalletAccountBtc>;
     #private;
 }
+export type BtcWalletConfig = {
+    /**
+     * - The electrum server's hostname (default: "electrum.blockstream.info").
+     */
+    host?: string;
+    /**
+     * - The electrum server's port (default: 50001).
+     */
+    port?: number;
+    /**
+     * - The name of the network to use; available values: "bitcoin", "regtest", "testnet" (default: "bitcoin").
+     */
+    network?: string;
+};
 import WalletAccountBtc from './wallet-account-btc.js';

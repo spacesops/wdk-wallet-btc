@@ -13,6 +13,8 @@
 // limitations under the License.
 'use strict'
 
+/** @typedef {import('./src/wallet-manager-btc.js').BtcWalletConfig} BtcWalletConfig */
+
 /** @typedef {import('./src/wallet-account-btc.js').default} WalletAccountBtc */
 /** @typedef {import('./src/wallet-account-btc.js').KeyPair} KeyPair */
 /** @typedef {import('./src/wallet-account-btc.js').BtcTransaction} BtcTransaction */
