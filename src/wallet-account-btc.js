@@ -134,6 +134,27 @@ export default class WalletAccountBtc {
     return tx.txid
   }
 
+  /**
+   * Returns the account's native token balance.
+   * 
+   * @returns {Promise<number>} The native token balance.
+   */
+  async getBalance() {
+    const addr = await this.getAddress()
+    const { confirmed } = await this.#electrumClient.getBalance(addr)
+    return confirmed
+  }
+
+  /**
+   * Returns the balance of the account for a specific token.
+   * 
+   * @param {string} tokenAddress - The smart contract address of the token.
+   * @returns {Promise<number>} The token balance.
+   */
+  async getTokenBalance(tokenAddress) {
+    throw new Error("Not supported on the bitcoin blockchain.")
+  }
+
   async #createTransaction ({ recipient, amount }) {
     let feeRate
     try {

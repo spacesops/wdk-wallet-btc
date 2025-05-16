@@ -26,6 +26,13 @@ const BIP_84_BTC_DERIVATION_PATH = 'm/84\'/0\'/0\'/0'
 
 const bip32 = BIP32Factory(ecc)
 
+/**
+ * @typedef {Object} BtcWalletConfig
+ * @property {string} [host] - The electrum server's hostname (default: "electrum.blockstream.info").
+ * @property {number} [port] - The electrum server's port (default: 50001).
+ * @property {string} [network] - The name of the network to use; available values: "bitcoin", "regtest", "testnet" (default: "bitcoin").
+ */
+
 export default class WalletManagerBtc {
   #seedPhrase
   #electrumClient
@@ -40,6 +47,7 @@ export default class WalletManagerBtc {
    * @param {string} [config.host] - The electrum server's hostname (default: "electrum.blockstream.info").
    * @param {number} [config.port] - The electrum server's port (default: 50001).
    * @param {string} [config.network] - The name of the network to use; available values: "bitcoin", "regtest", "testnet" (default: "bitcoin").
+   * @param {BtcWalletConfig} [config] - The configuration object.
    */
   constructor (seedPhrase, path, config = {}) {
     if (!WalletManagerBtc.isValidSeedPhrase(seedPhrase)) {
@@ -90,7 +98,7 @@ export default class WalletManagerBtc {
    * // Returns the account with derivation path m/84'/0'/0'/0/1
    * const account = await wallet.getAccount(1);
    * @param {number} [index] - The index of the account to get (default: 0).
-   * @returns {WalletAccountBtc} The account.
+   * @returns {Promise<WalletAccountBtc>} The account.
   */
   async getAccount (index = 0) {
     const path = this.#getBIP84HDPathString(index)

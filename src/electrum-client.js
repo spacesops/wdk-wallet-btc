@@ -172,7 +172,8 @@ export default class ElectrumClient {
 
   async getBalance (address) {
     const scriptHash = this.getScriptHash(address)
-    return await this.#request('blockchain.scripthash.get_balance', [scriptHash])
+    const result = await this.#request('blockchain.scripthash.get_balance', [scriptHash])
+    return result
   }
 
   isConnected () {

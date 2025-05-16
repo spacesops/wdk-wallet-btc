@@ -56,6 +56,19 @@ export default class WalletAccountBtc {
      * @returns {Promise<string>} The transaction's hash.
      */
     sendTransaction({ to, value }: BtcTransaction): Promise<string>;
+    /**
+     * Returns the account's native token balance.
+     *
+     * @returns {Promise<number>} The native token balance.
+     */
+    getBalance(): Promise<number>;
+    /**
+     * Returns the balance of the account for a specific token.
+     *
+     * @param {string} tokenAddress - The smart contract address of the token.
+     * @returns {Promise<number>} The token balance.
+     */
+    getTokenBalance(tokenAddress: string): Promise<number>;
     #private;
 }
 export type KeyPair = {
