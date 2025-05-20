@@ -41,6 +41,25 @@ export default class WalletManagerBtc {
      * @returns {Promise<WalletAccountBtc>} The account.
     */
     getAccount(index?: number): Promise<WalletAccountBtc>;
+    /**
+     * Returns the wallet account at a specific BIP-84 derivation path.
+     *
+     * @example
+     * // Returns the account with derivation path m/84'/0'/0'/0/1
+     * const account = await wallet.getAccountByPath("0'/0/1");
+     * @param {string} path - The derivation path (e.g. "0'/0/0").
+     * @returns {Promise<WalletAccountBtc>} The account.
+     */
+    getAccountByPath(path: string): Promise<WalletAccountBtc>;
+    /**
+     * Returns the current fee rates.
+     *
+     * @returns {Promise<{ normal: number, fast: number }>} The fee rates (in satoshis).
+     */
+    getFeeRates(): Promise<{
+        normal: number;
+        fast: number;
+    }>;
     #private;
 }
 export type BtcWalletConfig = {

@@ -15,13 +15,14 @@
 "use strict";
 
 import WalletManagerBtc from "../src/wallet-manager-btc.js";
-import config from "./test.opts.json"
+
+import config from "./test.config.json" with { type: "json" }
 
 let walletManager;
 
 beforeAll(async () => {
   const seedPhrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-  walletManager = new WalletManagerBtc(seedPhrase, {
+  walletManager = new WalletManagerBtc(seedPhrase, null,{
     port: config.port,
     host: config.host,
     network: config.network,
@@ -30,11 +31,10 @@ beforeAll(async () => {
 });
 
 describe("WalletManagerBtc Signing and Transaction Tests", () => {
-
   test("account attributes match BIP84 test vectors", async () => {
     //Source: https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki#test-vectors
     const seedPhrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-    const walletManager = new WalletManagerBtc(seedPhrase, {
+    const walletManager = new WalletManagerBtc(seedPhrase, null, {
       port: config.port,
       host: config.host,
       network: 'bitcoin',
@@ -46,6 +46,7 @@ describe("WalletManagerBtc Signing and Transaction Tests", () => {
     expect(addr).toEqual("bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu")
     expect(account.path).toEqual("m/84'/0'/0'/0/0")
   });
+
   test("should sign a message", async () => {
     const account = await walletManager.getAccount();
     const signature = await account.sign("Hello, world!");
@@ -92,6 +93,38 @@ describe("WalletManagerBtc Signing and Transaction Tests", () => {
     expect(typeof bal).toBe('number')
   });
 
+  test("should support deriv paths ", async () => {
+    const path = 'm/84\'/0\'/1\'/0'
+    const seedPhrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const wm = new WalletManagerBtc(seedPhrase, path, {
+      port: config.port,
+      host: config.host,
+      network: 'bitcoin',
+    });
+
+    const account = await wm.getAccount();
+    const oldAccount = await walletManager.getAccount()
+    expect(account.path).toEqual("m/84'/0'/1'/0/0")
+    expect(oldAccount.path).toEqual("m/84'/0'/0'/0/0")
+  });
+
+  test("should return fee rate", async () => {
+    const { slow, fast } = await walletManager.getFeeRate()
+
+    expect(typeof slow).toBe('number')
+    expect(typeof fast).toBe('number')
+  });
+
+  it('returns a WalletAccountBtc with the correct properties', async () => {
+    const seedPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
+    const manager = new WalletManagerBtc(seedPhrase)
+
+    const path = "m/84'/0'/0'/3/1"
+    const account = await manager.getAccountByPath(path)
+    expect(account.path).toBe(path)
+
+  })
+
   test(
     "should send a transaction successfully",
     async () => {
@@ -104,5 +137,30 @@ describe("WalletManagerBtc Signing and Transaction Tests", () => {
     },
     30000 
   );
-});
 
+  test(
+    "get transfer history",
+    async () => {
+      const account = await walletManager.getAccount();
+      const res = await account.getTransfers({})
+      expect(res.length).toBe(10)
+      const res2 = await account.getTransfers({ skip: 9, limit:  1})
+      expect(res2.length).toBe(1)
+      expect(res[9].txid).toBe(res2[0].txid)
+    },
+    30000 
+  );
+
+  test(
+    "quote transactions",
+    async () => {
+      const account = await walletManager.getAccount();
+      const to = "bcrt1q03lzm6tjtlng04lchtlpfk9hp93f5yrgklavtv";
+      const value = 10000;
+      const fee = await account.quoteTransaction({ to, value})
+      expect(fee > 0).toBe(true)
+      expect(Number.isInteger(fee)).toBe(true)
+    },
+    30000 
+  );
+});
