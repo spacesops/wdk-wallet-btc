@@ -30,6 +30,18 @@ const DUST_LIMIT = 546
  * @property {number} value - The amount of bitcoins to send to the recipient (in satoshis).
  */
 
+/**
+ * @typedef {Object} BtcTransfer
+ * @property {string} txid - The transaction ID.
+ * @property {number} vout - The index of the output in the transaction.
+ * @property {"incoming"|"outgoing"} direction - Direction of the transfer.
+ * @property {number} value - The value of the transfer in BTC.
+ * @property {?number} fee - The fee paid for the full transaction (in BTC).
+ * @property {?string} recipient - The receiving address for outgoing transfers.
+ * @property {number} height - The block height (0 if unconfirmed).
+ * @property {string} address - The user's own address.
+ */
+
 export default class WalletAccountBtc {
   #path
   #index
@@ -115,6 +127,17 @@ export default class WalletAccountBtc {
     } catch (_) {
       return false
     }
+  }
+
+  /**
+   * Quote transactions
+   *
+   * @param {BtcTransaction} tx - The transaction to send.
+   * @returns {Promise<number>} The fee in satoshis
+   */
+  async quoteTransaction ({ to, value }) {
+    const tx = await this.#createTransaction({ recipient: to, amount: value })
+    return tx.fee
   }
 
   /**
@@ -288,7 +311,8 @@ export default class WalletAccountBtc {
     const txId = tx.getId()
     return {
       txid: txId,
-      hex: txHex
+      hex: txHex,
+      fee: estimatedFee
     }
   }
 
@@ -311,5 +335,99 @@ export default class WalletAccountBtc {
       console.error('Electrum broadcast error:', err)
       throw new Error('Failed to broadcast transaction: ' + err.message)
     }
+  }
+
+  /**
+  * Returns per-output transfer records (one per vout) for this wallet.
+  * @param {Object} [options] - Optional filters and pagination.
+  * @param {"incoming"|"outgoing"|"all"} [options.direction="all"] - Direction filter.
+  * @param {number} [options.limit=10] - Max number of transfers to return.
+  * @param {number} [options.skip=0] - Number of transactions to skip.
+  * @returns {Promise<BtcTransfers>} A list of transfers (one per vout).
+  */
+  async getTransfers (options = {}) {
+    const direction = options.direction || 'all'
+    const limit = options.limit ?? 10
+    const skip = options.skip ?? 0
+    const address = await this.getAddress()
+
+    const history = await this.#electrumClient.getHistory(address)
+    const transfers = []
+
+    const isAddressMatch = (scriptPubKey, addr) => {
+      if (!scriptPubKey) return false
+      if (scriptPubKey.address) return scriptPubKey.address === addr
+      if (Array.isArray(scriptPubKey.addresses)) return scriptPubKey.addresses.includes(addr)
+      return false
+    }
+
+    const extractAddress = (scriptPubKey) => {
+      if (!scriptPubKey) return null
+      if (scriptPubKey.address) return scriptPubKey.address
+      if (Array.isArray(scriptPubKey.addresses)) return scriptPubKey.addresses[0]
+      return null
+    }
+
+    const getInputValue = async (vinList) => {
+      let total = 0
+      for (const vin of vinList) {
+        try {
+          const prevTx = await this.#electrumClient.getTransaction(vin.txid)
+          const prevVout = prevTx.vout[vin.vout]
+          total += prevVout.value
+        } catch (_) {}
+      }
+      return total
+    }
+
+    const isOutgoingTx = async (vinList) => {
+      for (const vin of vinList) {
+        try {
+          const prevTx = await this.#electrumClient.getTransaction(vin.txid)
+          const prevVout = prevTx.vout[vin.vout]
+          if (isAddressMatch(prevVout.scriptPubKey, address)) return true
+        } catch (_) {}
+      }
+      return false
+    }
+
+    for (const item of history.slice(skip)) {
+      if (transfers.length >= limit) break
+
+      const tx = await this.#electrumClient.getTransaction(item.tx_hash)
+      const totalInput = await getInputValue(tx.vin)
+      const totalOutput = tx.vout.reduce((sum, vout) => sum + vout.value, 0)
+      const fee = totalInput > 0 ? +(totalInput - totalOutput).toFixed(8) : null
+      const isOutgoing = await isOutgoingTx(tx.vin)
+
+      for (const [index, vout] of tx.vout.entries()) {
+        const recipientAddr = extractAddress(vout.scriptPubKey)
+        const isToSelf = isAddressMatch(vout.scriptPubKey, address)
+
+        let directionType = null
+        if (isToSelf && !isOutgoing) directionType = 'incoming'
+        else if (!isToSelf && isOutgoing) directionType = 'outgoing'
+        else if (isToSelf && isOutgoing) directionType = 'change'
+        else continue // skip dust/irrelevant output
+
+        // we ignore change tx
+        if (directionType === 'change') continue
+        if (direction !== 'all' && direction !== directionType) continue
+        if (transfers.length >= limit) break
+
+        transfers.push({
+          txid: item.tx_hash,
+          vout: index,
+          direction: directionType,
+          value: vout.value,
+          fee,
+          recipient: recipientAddr,
+          height: item.height,
+          address
+        })
+      }
+    }
+
+    return transfers
   }
 }

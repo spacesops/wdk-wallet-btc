@@ -86,3 +86,21 @@
 - **Returns**: `Promise<WalletAccountBtc>`
   - An instance of `WalletAccountBtc` configured for the given path.
 
+##### getTransfers
+- **Description**: Returns a list of Bitcoin transfers for the current account, with each vout treated as a separate transfer record. Filters by direction and supports pagination.
+- **Parameters**:
+    - `options` (Object, optional): Filter and pagination options.
+    - `direction` ("incoming" | "outgoing" | "all"): Filter transfers by direction. Defaults to "all".
+    - `limit` (number): Maximum number of transfer records to return. Defaults to 10.
+    - `skip` (number): Number of transactions to skip before processing. Defaults to 0.
+- **Returns**: Promise<BtcTransfers>
+
+##### quoteTransaction
+- **Description**: returns estimate tx fee to be paid in satoshi
+- **Parameters**:
+  - `options` (Object): The transaction options.
+    - `to` (string): The recipient address.
+    - `value` (number): The amount to send in bitcoin.
+- **Returns**: `Promise<Number>`: The transaction fee in satoshi.
+
+

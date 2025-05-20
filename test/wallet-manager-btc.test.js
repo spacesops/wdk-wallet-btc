@@ -137,5 +137,37 @@ describe("WalletManagerBtc Signing and Transaction Tests", () => {
     },
     30000 
   );
+
+  test(
+    "get transfer history",
+    async () => {
+      const account = await walletManager.getAccount();
+      const res = await account.getTransfers({})
+      expect(res.length).toBe(10)
+      const res2 = await account.getTransfers({ skip: 9, limit:  1})
+      expect(res2.length).toBe(1)
+      expect(res[9].txid).toBe(res2[0].txid)
+    },
+    30000 
+  );
+
+  test(
+    "quote transactions",
+    async () => {
+      const account = await walletManager.getAccount();
+      const to = "bcrt1q03lzm6tjtlng04lchtlpfk9hp93f5yrgklavtv";
+      const value = 10000;
+      const fee = await account.quoteTransaction({ to, value})
+      expect(typeof fee).toBe('number')
+      expect(fee > 0).toBe(true)
+      expect(Number.isInteger(fee)).toBe(true)
+    },
+    30000 
+  );
+
+
+
+
+
 });
 

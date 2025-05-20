@@ -166,7 +166,9 @@ export default class WalletManagerBtc {
     return new Promise((resolve, reject) => {
       https.get('https://mempool.space/api/v1/fees/recommended', (res) => {
         let raw = ''
-        res.on('data', chunk => raw += chunk)
+        res.on('data', (chunk) => {
+          raw += chunk
+        })
         res.on('end', () => {
           try {
             const { fastestFee, hourFee } = JSON.parse(raw)
