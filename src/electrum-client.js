@@ -53,25 +53,21 @@ export default class ElectrumClient {
         const socketOptions = {
           port: this.#port,
           host: this.#host,
-          // Add socket options to handle address reuse and keep-alive
           reuseAddress: true,
           noDelay: true,
           keepAlive: true,
-          keepAliveInitialDelay: 60000, // 60 seconds
-          // Add timeout to prevent hanging connections
-          timeout: 30000 // 30 seconds
+          keepAliveInitialDelay: 60000
         }
 
         const socket = this.#protocol === 'tcp'
           ? _netConnect(socketOptions)
           : __tlsConnect(socketOptions)
 
-        // Add timeout handler
         socket.setTimeout(30000)
         socket.on('timeout', () => {
           socket.destroy()
           this.#connected = false
-          reject(new Error('Connection timeout'))
+          reject(new Error('Electrum client connection time-out.'))
         })
 
         socket.on('connect', () => {
@@ -83,7 +79,7 @@ export default class ElectrumClient {
 
         socket.on('error', (error) => {
           this.#connected = false
-          // Clean up socket on error
+
           if (this.#socket) {
             this.#socket.destroy()
             this.#socket = null
@@ -94,7 +90,7 @@ export default class ElectrumClient {
         socket.on('close', () => {
           this.#connected = false
           this.#socket = null
-          // Clear pending requests on close
+
           this.#pendingRequests.clear()
         })
 
@@ -103,9 +99,8 @@ export default class ElectrumClient {
           this.#socket = null
         })
       } catch (error) {
-        console.error('Failed to connect:', error)
         this.#connected = false
-        // Ensure socket cleanup on error
+
         if (this.#socket) {
           this.#socket.destroy()
           this.#socket = null
@@ -154,7 +149,6 @@ export default class ElectrumClient {
   async disconnect () {
     return new Promise((resolve) => {
       if (this.#socket && this.#connected) {
-        // Set up one-time close handler for cleanup
         this.#socket.once('close', () => {
           this.#connected = false
           this.#socket = null
@@ -162,12 +156,9 @@ export default class ElectrumClient {
           resolve()
         })
 
-        // End the socket gracefully
         try {
           this.#socket.end()
         } catch (error) {
-          console.error('Error during disconnect:', error)
-          // Force destroy if graceful shutdown fails
           this.#socket.destroy()
           this.#socket = null
           this.#connected = false
@@ -185,14 +176,12 @@ export default class ElectrumClient {
       try {
         await this.connect()
       } catch (connectError) {
-        console.error('Connection error:', connectError)
         if (retries > 0) {
-          console.log(`Retrying connection, ${retries} attempts remaining`)
-          // Wait before retry
           await new Promise(resolve => setTimeout(resolve, 1000))
+
           return this.#request(method, params, retries - 1)
         }
-        throw new Error(`Failed to connect after retries: ${connectError.message}`)
+        throw new Error(`Failed to connect after retries: ${connectError.message}.`)
       }
     }
 
@@ -204,11 +193,10 @@ export default class ElectrumClient {
         params
       }
 
-      // Set timeout for request
       const timeoutId = setTimeout(() => {
         this.#pendingRequests.delete(id)
-        reject(new Error('Request timeout'))
-      }, 30000) // 30 second timeout
+        reject(new Error('Electrum client request time-out.'))
+      }, 30000)
 
       this.#pendingRequests.set(id, {
         resolve: (result) => {
@@ -223,7 +211,7 @@ export default class ElectrumClient {
 
       try {
         if (!this.#socket || !this.#connected) {
-          throw new Error('Socket not connected')
+          throw new Error('Electrum client websocket client not connected.')
         }
         this.#socket.write(JSON.stringify(request) + '\n')
       } catch (error) {
