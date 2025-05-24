@@ -6,3 +6,5 @@ tmp
 node_modules/
 .DS_Store
 Session.vim
+
+coverage/
