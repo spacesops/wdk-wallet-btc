@@ -1,6 +1,10 @@
 const mockedAddress = 'mocked-btc-address'
 
 const bitcoinLibMock = {
+  networks: {
+    bitcoin: {},
+    regtest: {}
+  },
   payments: {
     p2wpkh: () => ({ address: mockedAddress })
   },
