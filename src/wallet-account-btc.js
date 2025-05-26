@@ -14,7 +14,7 @@
 'use strict'
 
 import { crypto, payments, Psbt } from 'bitcoinjs-lib'
-import { validateMnemonic, mnemonicToSeedSync } from 'bip39'
+import { mnemonicToSeedSync } from 'bip39'
 import { BIP32Factory } from 'bip32'
 
 import ecc from '@bitcoinerlab/secp256k1'
@@ -76,10 +76,6 @@ export default class WalletAccountBtc {
    * @param {BtcWalletConfig} [config] - The configuration object.
    */
   constructor (seedPhrase, path, config) {
-    if (!validateMnemonic(seedPhrase)) {
-      throw new Error('The seed phrase is invalid.')
-    }
-
     this.#electrumClient = new ElectrumClient(config)
 
     this.#bip32 = WalletAccountBtc.#seedPhraseToBip32(seedPhrase)
@@ -143,10 +139,14 @@ export default class WalletAccountBtc {
    * @returns {Promise<boolean>} True if the signature is valid.
    */
   async verify (message, signature) {
-    const messageHash = crypto.sha256(Buffer.from(message))
-    const signatureBuffer = Buffer.from(signature, 'base64')
-    const result = this.#bip32.verify(messageHash, signatureBuffer)
-
+    let result
+    try {
+      const messageHash = crypto.sha256(Buffer.from(message))
+      const signatureBuffer = Buffer.from(signature, 'base64')
+      result = this.#bip32.verify(messageHash, signatureBuffer)
+    } catch {
+      return false
+    }
     return result
   }
 
@@ -296,9 +296,8 @@ export default class WalletAccountBtc {
   }
 
   #initialize (path) {
-    const wallet = this.#bip32.derivePath(path)
-
     this.#path = `${BIP_84_BTC_DERIVATION_PATH_PREFIX}/${path}`
+    const wallet = this.#bip32.derivePath(this.#path)
 
     this.#address = payments.p2wpkh({
       pubkey: wallet.publicKey,
@@ -429,7 +428,12 @@ export default class WalletAccountBtc {
   }
 
   static #seedPhraseToBip32 (seedPhrase) {
-    const seed = mnemonicToSeedSync(seedPhrase)
+    let seed
+    if (typeof seedPhrase === 'string') {
+      seed = mnemonicToSeedSync(seedPhrase)
+    } else {
+      seed = seedPhrase
+    }
     const root = bip32.fromSeed(seed)
     return root
   }

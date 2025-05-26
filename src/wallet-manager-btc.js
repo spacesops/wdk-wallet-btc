@@ -57,7 +57,11 @@ export default class WalletManagerBtc {
    * @returns {boolean} True if the seed phrase is valid.
    */
   static isValidSeedPhrase (seedPhrase) {
-    return validateMnemonic(seedPhrase)
+    if (typeof seedPhrase === 'string') {
+      return validateMnemonic(seedPhrase)
+    }
+    if (Buffer.isBuffer(seedPhrase)) return true
+    return false
   }
 
   /**

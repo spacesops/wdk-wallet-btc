@@ -18,6 +18,7 @@ import WalletManagerBtc from '../src/wallet-manager-btc.js'
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { mnemonicToSeedSync } from 'bip39'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -25,9 +26,9 @@ const config = JSON.parse(readFileSync(join(__dirname, 'test.config.json'), 'utf
 
 let walletManager
 
+const defaultSeed = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
 beforeAll(async () => {
-  const seedPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
-  walletManager = new WalletManagerBtc(seedPhrase, null, {
+  walletManager = new WalletManagerBtc(defaultSeed, {
     port: config.port,
     host: config.host,
     network: config.network
@@ -37,8 +38,8 @@ beforeAll(async () => {
 describe('WalletManagerBtc Signing and Transaction Tests', () => {
   test('account attributes match BIP84 test vectors', async () => {
     // Source: https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki#test-vectors
-    const seedPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
-    const walletManager = new WalletManagerBtc(seedPhrase, null, {
+    const seedPhrase = defaultSeed
+    const walletManager = new WalletManagerBtc(seedPhrase, {
       port: config.port,
       host: config.host,
       network: 'bitcoin'
@@ -97,25 +98,10 @@ describe('WalletManagerBtc Signing and Transaction Tests', () => {
     expect(typeof bal).toBe('number')
   })
 
-  test('should support deriv paths ', async () => {
-    const path = 'm/84\'/0\'/1\'/0'
-    const seedPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
-    const wm = new WalletManagerBtc(seedPhrase, path, {
-      port: config.port,
-      host: config.host,
-      network: 'bitcoin'
-    })
-
-    const account = await wm.getAccount()
-    const oldAccount = await walletManager.getAccount()
-    expect(account.path).toEqual("m/84'/0'/1'/0/0")
-    expect(oldAccount.path).toEqual("m/84'/0'/0'/0/0")
-  })
-
   test('should return fee rate', async () => {
-    const { slow, fast } = await walletManager.getFeeRate()
+    const { normal, fast } = await walletManager.getFeeRates()
 
-    expect(typeof slow).toBe('number')
+    expect(typeof normal).toBe('number')
     expect(typeof fast).toBe('number')
   })
 
@@ -123,9 +109,9 @@ describe('WalletManagerBtc Signing and Transaction Tests', () => {
     const seedPhrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about'
     const manager = new WalletManagerBtc(seedPhrase)
 
-    const path = "m/84'/0'/0'/3/1"
+    const path = "0'/3/1"
     const account = await manager.getAccountByPath(path)
-    expect(account.path).toBe(path)
+    expect(account.path).toBe("m/84'/0'/0'/3/1")
   })
 
   test(
@@ -163,6 +149,24 @@ describe('WalletManagerBtc Signing and Transaction Tests', () => {
       const fee = await account.quoteTransaction({ to, value })
       expect(fee > 0).toBe(true)
       expect(Number.isInteger(fee)).toBe(true)
+    },
+    30000
+  )
+  test(
+    'should support seed entropy',
+    async () => {
+      const pk = mnemonicToSeedSync(defaultSeed)
+      const walletManager = new WalletManagerBtc(pk, {
+        port: config.port,
+        host: config.host,
+        network: 'bitcoin'
+      })
+      const account = await walletManager.getAccount()
+      const addr = await account.getAddress()
+      expect(account.keyPair.privateKey).toEqual('KyZpNDKnfs94vbrwhJneDi77V6jF64PWPF8x5cdJb8ifgg2DUc9d')
+      expect(account.keyPair.publicKey).toEqual('0330d54fd0dd420a6e5f8d3624f5f3482cae350f79d5f0753bf5beef9c2d91af3c')
+      expect(addr).toEqual('bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu')
+      expect(account.path).toEqual("m/84'/0'/0'/0/0")
     },
     30000
   )
