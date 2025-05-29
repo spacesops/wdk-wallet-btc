@@ -1,6 +1,6 @@
-# wdk-wallet-btc Integration Test Setup
+# wdk-wallet-btc Test Setup
 
-This guide explains how to set up your local development environment to run integration tests for the `WalletManagerBtc` module.
+This guide explains how to set up your local development environment to run tests for the `WalletManagerBtc` module.
 
 ---
 
