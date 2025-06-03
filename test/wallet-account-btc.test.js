@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals'
 import { execSync } from 'child_process'
 
-// const BCLI = "bitcoin-cli -regtest -datadir=$HOME/.bitcoin -rpcwallet=testwallet "
+const BCLI = "bitcoin-cli -regtest -datadir=$HOME/.bitcoin -rpcwallet=testwallet "
 const callBitcoin = function(cmd) {
   return execSync(`${BCLI} ${cmd}`)
 }
