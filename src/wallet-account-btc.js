@@ -14,7 +14,7 @@
 'use strict'
 
 import { crypto, payments, Psbt } from 'bitcoinjs-lib'
-import { validateMnemonic, mnemonicToSeedSync } from 'bip39'
+import { mnemonicToSeedSync, validateMnemonic } from 'bip39'
 import { BIP32Factory } from 'bip32'
 
 import ecc from '@bitcoinerlab/secp256k1'
@@ -43,9 +43,9 @@ const DUST_LIMIT = 546
  * @property {string} address - The user's own address.
  * @property {number} vout - The index of the output in the transaction.
  * @property {number} height - The block height (if unconfirmed, 0).
- * @property {number} value - The value of the transfer (in bitcoin).
+ * @property {number} value - The value of the transfer (in satoshis).
  * @property {"incoming" | "outgoing"} direction - The direction of the transfer.
- * @property {number} [fee] - The fee paid for the full transaction (in bitcoin).
+ * @property {number} [fee] - The fee paid for the full transaction (in satoshis).
  * @property {string} [recipient] - The receiving address for outgoing transfers.
  */
 
@@ -143,10 +143,14 @@ export default class WalletAccountBtc {
    * @returns {Promise<boolean>} True if the signature is valid.
    */
   async verify (message, signature) {
-    const messageHash = crypto.sha256(Buffer.from(message))
-    const signatureBuffer = Buffer.from(signature, 'base64')
-    const result = this.#bip32.verify(messageHash, signatureBuffer)
-
+    let result
+    try {
+      const messageHash = crypto.sha256(Buffer.from(message))
+      const signatureBuffer = Buffer.from(signature, 'base64')
+      result = this.#bip32.verify(messageHash, signatureBuffer)
+    } catch {
+      return false
+    }
     return result
   }
 
@@ -296,9 +300,8 @@ export default class WalletAccountBtc {
   }
 
   #initialize (path) {
-    const wallet = this.#bip32.derivePath(path)
-
     this.#path = `${BIP_84_BTC_DERIVATION_PATH_PREFIX}/${path}`
+    const wallet = this.#bip32.derivePath(this.#path)
 
     this.#address = payments.p2wpkh({
       pubkey: wallet.publicKey,
@@ -315,9 +318,7 @@ export default class WalletAccountBtc {
   async #getTransaction ({ recipient, amount }) {
     const address = await this.getAddress()
     const utxoSet = await this.#getUtxos(amount, address)
-    const feeEstimate = await this.#electrumClient.getFeeEstimate()
-
-    const feeRate = new BigNumber(feeEstimate).multipliedBy(100_000)
+    const feeRate = await this.#electrumClient.getFeeEstimate()
 
     return await this.#getRawTransaction(utxoSet, amount, recipient, feeRate)
   }
@@ -387,6 +388,7 @@ export default class WalletAccountBtc {
 
       const change = totalInput.minus(amount).minus(fee)
       const addr = await this.getAddress()
+
       if (change.isGreaterThan(DUST_LIMIT)) {
         psbt.addOutput({
           address: addr,
@@ -414,6 +416,7 @@ export default class WalletAccountBtc {
     estimatedFee = BigNumber.max(estimatedFee, minRelayFee)
 
     psbt = await createPsbt(estimatedFee)
+    
     const tx = psbt.extractTransaction()
     const txHex = tx.toHex()
     const txId = tx.getId()
@@ -429,7 +432,12 @@ export default class WalletAccountBtc {
   }
 
   static #seedPhraseToBip32 (seedPhrase) {
-    const seed = mnemonicToSeedSync(seedPhrase)
+    let seed
+    if (typeof seedPhrase === 'string') {
+      seed = mnemonicToSeedSync(seedPhrase)
+    } else {
+      seed = seedPhrase
+    }
     const root = bip32.fromSeed(seed)
     return root
   }
