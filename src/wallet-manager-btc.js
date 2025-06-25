@@ -14,15 +14,14 @@
 'use strict'
 
 import AbstractWalletManager from '@wdk/wallet'
+
 import WalletAccountBtc from './wallet-account-btc.js'
 
-const MEMPOOL_SPACE_URL = 'https://mempool.space'
+/** @typedef {import('@wdk/wallet').FeeRates} FeeRates */
 
-/**
- * @typedef {import('./abstract-wallet-manager.js').FeeRates} FeeRates
- * @typedef {import('./wallet-account-btc.js').default} WalletAccountBtc
- * @typedef {import('./wallet-account-btc.js').BtcWalletConfig} BtcWalletConfig
- */
+/** @typedef {import('./wallet-account-btc.js').BtcWalletConfig} BtcWalletConfig */
+
+const MEMPOOL_SPACE_URL = 'https://mempool.space'
 
 export default class WalletManagerBtc extends AbstractWalletManager {
   /**
@@ -42,20 +41,15 @@ export default class WalletManagerBtc extends AbstractWalletManager {
      */
     this._config = config
 
-    /**
-     * A map between derivation paths and wallet accounts. It contains all the wallet accounts that have been accessed through the {@link getAccount} and {@link getAccountByPath} methods.
-     *
-     * @protected
-     * @type {{ [path: string]: WalletAccountBtc }}
-     */
+    /** @private */
     this._accounts = {}
   }
 
   /**
-   * Returns the wallet account at a specific index (see [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)).
+   * Returns the wallet account at a specific index (see [BIP-84](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki)).
    *
    * @example
-   * // Returns the account with derivation path m/44'/0'/0'/0/1
+   * // Returns the account with derivation path m/84'/0'/0'/0/1
    * const account = await wallet.getAccount(1);
    * @param {number} [index] - The index of the account to get (default: 0).
    * @returns {Promise<WalletAccountBtc>} The account.
@@ -65,10 +59,10 @@ export default class WalletManagerBtc extends AbstractWalletManager {
   }
 
   /**
-   * Returns the wallet account at a specific BIP-44 derivation path.
+   * Returns the wallet account at a specific [BIP-84](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki) derivation path.
    *
    * @example
-   * // Returns the account with derivation path m/44'/0'/0'/0/1
+   * // Returns the account with derivation path m/84'/0'/0'/0/1
    * const account = await wallet.getAccountByPath("0'/0/1");
    * @param {string} path - The derivation path (e.g. "0'/0/0").
    * @returns {Promise<WalletAccountBtc>} The account.
@@ -90,12 +84,14 @@ export default class WalletManagerBtc extends AbstractWalletManager {
    */
   async getFeeRates () {
     const response = await fetch(`${MEMPOOL_SPACE_URL}/api/v1/fees/recommended`)
+
     const { fastestFee, hourFee } = await response.json()
+
     return { normal: hourFee, fast: fastestFee }
   }
 
   /**
-   * Disposes all the wallet accounts, erasing their private keys from the memory.
+   * Disposes all the wallet accounts, erasing their private keys from the memory and closing the connection with the electrum server.
    */
   dispose () {
     for (const account of Object.values(this._accounts)) {

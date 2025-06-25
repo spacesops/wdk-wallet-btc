@@ -224,12 +224,6 @@ export default class ElectrumClient {
     return await this._request('blockchain.scripthash.listunspent', [scriptHash])
   }
 
-  /**
-   * Retrieves and parses a transaction from the blockchain.
-   * It requests the raw transaction hex and parses it locally to avoid server-side 'verbose' transaction support issues.
-   * @param {string} txid - The transaction ID.
-   * @returns {Promise<bitcoin.Transaction>} A promise that resolves to the parsed transaction object from bitcoinjs-lib.
-   */
   async getTransaction (txid) {
     const rawTxHex = await this._request('blockchain.transaction.get', [txid, false])
     if (typeof rawTxHex !== 'string') {
@@ -237,8 +231,6 @@ export default class ElectrumClient {
     }
 
     const tx = Transaction.fromHex(rawTxHex)
-
-    // NOTE: The 'value' in the vout of a parsed bitcoinjs-lib transaction is already in satoshis.
 
     return tx
   }
