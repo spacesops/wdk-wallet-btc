@@ -2,6 +2,7 @@ import 'dotenv/config'
 import { describe, test, expect, beforeAll, afterAll } from '@jest/globals'
 import { mnemonicToSeedSync } from 'bip39'
 import { execSync } from 'child_process'
+import Waiter from './setup/waiter.js'
 
 import WalletAccountBtc from '../src/wallet-account-btc.js'
 
@@ -24,6 +25,7 @@ const CONFIG = {
   port: Number(process.env.TEST_ELECTRUM_SERVER_PORT || 7777),
   network: 'regtest'
 }
+const ZMQ_PORT = process.env.TEST_BITCOIN_ZMQ_PORT || '29000'
 
 class BitcoinCli {
   constructor (dataDir, walletName = 'testwallet') {
@@ -37,27 +39,30 @@ class BitcoinCli {
 const btc = new BitcoinCli(DATA_DIR)
 
 describe('WalletAccountBtc', () => {
-  async function mineBlock (account) {
-    const minerAddr = btc.call('getnewaddress').toString().trim()
-
-    btc.call(`generatetoaddress 1 ${minerAddr}`)
-
-    // wait until client and server are in sync
-    if (account) {
-      await account.getBalance()
+  let minerAddr
+  async function mineBlock () {
+    if (!minerAddr){
+      minerAddr = btc.call('getnewaddress').toString().trim()
     }
+    const blockPromise = Waiter.waitForBlocks(
+      1,
+      CONFIG.host,
+      ZMQ_PORT
+    )
+    btc.call(`generatetoaddress 1 ${minerAddr}`)
+    await blockPromise
   }
 
   async function createAndFundAccount () {
     const account = new WalletAccountBtc(SEED_PHRASE, RELATIVE_PATH, CONFIG)
     const recipient = btc.call('getnewaddress').toString().trim()
     btc.call(`sendtoaddress ${ACCOUNT.address} 0.01`)
-    await mineBlock(account)
+    await mineBlock()
     return { account, recipient }
   }
 
   let account, recipient
-  beforeAll(async () => {
+  beforeAll(async () => {    
     ;({ account, recipient } = await createAndFundAccount())
   })
 
@@ -79,9 +84,7 @@ describe('WalletAccountBtc', () => {
     test('should successfully initialize an account for the given seed and path', () => {
       const account = new WalletAccountBtc(SEED, RELATIVE_PATH)
       expect(account.index).toBe(ACCOUNT.index)
-
       expect(account.path).toBe(ACCOUNT.path)
-
       expect(account.keyPair).toEqual({
         privateKey: new Uint8Array(Buffer.from(ACCOUNT.keyPair.privateKey, 'hex')),
         publicKey: new Uint8Array(Buffer.from(ACCOUNT.keyPair.publicKey, 'hex'))
@@ -89,11 +92,13 @@ describe('WalletAccountBtc', () => {
     })
 
     test('should throw if the seed phrase is invalid', () => {
-      expect(() => new WalletAccountBtc(INVALID_SEED_PHRASE, RELATIVE_PATH)).toThrow('The seed phrase is invalid.')
+      expect(() => new WalletAccountBtc(INVALID_SEED_PHRASE, RELATIVE_PATH))
+        .toThrow('The seed phrase is invalid.')
     })
 
     test('should throw if the path is invalid', () => {
-      expect(() => new WalletAccountBtc(SEED_PHRASE, "a'/b/c")).toThrow(/Expected BIP32Path/)
+      expect(() => new WalletAccountBtc(SEED_PHRASE, "a'/b/c"))
+        .toThrow(/Expected BIP32Path/)
     })
   })
 
@@ -106,30 +111,27 @@ describe('WalletAccountBtc', () => {
 
   describe('sign', () => {
     const MESSAGE = 'Dummy message to sign.'
-
-    const EXPECTED_SIGNATURE = 'd70594939c4e5fc68694fd09c42aabccb715a22f88eb0a84dc333410236a76ee6061f863a86094bb3858ca44be048675516b02fd46dd3b6a23e2255367a44509'
+    const EXPECTED_SIGNATURE =
+      'd70594939c4e5fc68694fd09c42aabccb715a22f88eb0a84dc333410236a76ee6061f863a86094bb3858ca44be048675516b02fd46dd3b6a23e2255367a44509'
 
     test('should return the correct signature', async () => {
       const signature = await account.sign(MESSAGE)
-
       expect(signature).toBe(EXPECTED_SIGNATURE)
     })
   })
 
   describe('verify', () => {
     const MESSAGE = 'Dummy message to sign.'
-
-    const EXPECTED_SIGNATURE = 'd70594939c4e5fc68694fd09c42aabccb715a22f88eb0a84dc333410236a76ee6061f863a86094bb3858ca44be048675516b02fd46dd3b6a23e2255367a44509'
+    const EXPECTED_SIGNATURE =
+      'd70594939c4e5fc68694fd09c42aabccb715a22f88eb0a84dc333410236a76ee6061f863a86094bb3858ca44be048675516b02fd46dd3b6a23e2255367a44509'
 
     test('should return true for a valid signature', async () => {
       const result = await account.verify(MESSAGE, EXPECTED_SIGNATURE)
-
       expect(result).toBe(true)
     })
 
     test('should return false for an invalid signature', async () => {
       const result = await account.verify('Another message.', EXPECTED_SIGNATURE)
-
       expect(result).toBe(false)
     })
 
@@ -149,44 +151,41 @@ describe('WalletAccountBtc', () => {
   describe('sendTransaction', () => {
     test('should successfully send a transaction and include it in a block', async () => {
       const TRANSACTION = { to: recipient, value: 1_000 }
-
       const { hash, fee } = await account.sendTransaction(TRANSACTION)
-
-      // before it’s mined, fetch the exact fee from the mempool entry
       const mempoolEntry = JSON.parse(btc.call(`getmempoolentry ${hash}`))
-      const exactFee = Math.round(mempoolEntry.fees.base * 1e8) // sats
+      const exactFee = Math.round(mempoolEntry.fees.base * 1e8)
       expect(exactFee).toBe(fee)
-
-      // mine it into a block to inspect via gettransaction
-      await mineBlock(account)
-
-      const raw = btc.call(`gettransaction ${hash}`)
-      const txInfo = JSON.parse(raw.toString())
+      await mineBlock()
+      const txInfo = JSON.parse(btc.call(`gettransaction ${hash}`))
       expect(txInfo.txid).toBe(hash)
       expect(txInfo.details[0].address).toBe(TRANSACTION.to)
-      // details[0].amount is in btc (negative for sends); convert to sats
-      expect(Math.round(Math.abs(txInfo.details[0].amount) * 1e8)).toBe(TRANSACTION.value)
+      expect(Math.round(Math.abs(txInfo.details[0].amount) * 1e8))
+        .toBe(TRANSACTION.value)
     })
 
     test('should throw for dust-limit value', async () => {
-      await expect(account.sendTransaction({ to: recipient, value: 500 })).rejects.toThrow('dust limit')
+      await expect(account.sendTransaction({ to: recipient, value: 500 }))
+        .rejects.toThrow('dust limit')
     })
 
     test('should throw when no UTXOs are available', async () => {
       const fresh = new WalletAccountBtc(SEED_PHRASE, "0'/0/20", CONFIG)
-      await expect(fresh.sendTransaction({ to: recipient, value: 1000 })).rejects.toThrow('No unspent outputs available.')
+      await expect(fresh.sendTransaction({ to: recipient, value: 1000 }))
+        .rejects.toThrow('No unspent outputs available.')
     })
 
     test('should throw if total balance is less than amount + fee', async () => {
-      await expect(account.sendTransaction({ to: recipient, value: 900_000_000_000 })).rejects.toThrow('Insufficient balance')
+      await expect(account.sendTransaction({ to: recipient, value: 900_000_000_000 }))
+        .rejects.toThrow('Insufficient balance')
     })
 
     test('should throw if change is below dust', async () => {
       const lowBalance = new WalletAccountBtc(SEED_PHRASE, "0'/0/30", CONFIG)
       const addr = await lowBalance.getAddress()
       btc.call(`sendtoaddress ${addr} 0.00001`)
-      await mineBlock(lowBalance)
-      await expect(lowBalance.sendTransaction({ to: recipient, value: 1000 })).rejects.toThrow('Insufficient balance')
+      await mineBlock()
+      await expect(lowBalance.sendTransaction({ to: recipient, value: 1000 }))
+        .rejects.toThrow('Insufficient balance')
     })
   })
 
@@ -215,39 +214,37 @@ describe('WalletAccountBtc', () => {
   })
 
   describe('getTransfers', () => {
-    async function createIncomingTransfer (account) {
-      const addr = await account.getAddress()
+    async function createIncomingTransfer (acct) {
+      const addr = await acct.getAddress()
       const txid = btc.call(`sendtoaddress ${addr} 0.01`)
-      await mineBlock(account)
+      await mineBlock()
       const height = Number(btc.call('getblockcount'))
       const info = JSON.parse(btc.call(`gettransaction ${txid}`))
-      const vout = info.details[0].vout
-      const fee = Math.round(Math.abs(info.fee) * 1e8)
       return {
         txid,
         height,
         value: 1_000_000,
-        vout,
+        vout: info.details[0].vout,
         direction: 'incoming',
         recipient: addr,
-        fee,
+        fee: Math.round(Math.abs(info.fee) * 1e8),
         address: addr
       }
     }
 
-    async function createOutgoingTransfer (account, recipient, value) {
-      const { hash, fee } = await account.sendTransaction({ to: recipient, value })
-      await mineBlock(account)
+    async function createOutgoingTransfer (acct, rec, val) {
+      const { hash, fee } = await acct.sendTransaction({ to: rec, value: val })
+      await mineBlock()
       const height = Number(btc.call('getblockcount'))
       return {
         txid: hash,
         height,
-        value,
-        vout: 0, // first output in a single-recipient tx
+        value: val,
+        vout: 0,
         direction: 'outgoing',
-        recipient,
+        recipient: rec,
         fee,
-        address: await account.getAddress()
+        address: await acct.getAddress()
       }
     }
 
@@ -257,16 +254,9 @@ describe('WalletAccountBtc', () => {
     beforeAll(async () => {
       txAccount = new WalletAccountBtc(SEED_PHRASE, "0'/0'/1/0", CONFIG)
       txRecipient = btc.call('getnewaddress')
-
-      TRANSFERS.push(
-        await createIncomingTransfer(txAccount)
-      )
-      TRANSFERS.push(
-        await createOutgoingTransfer(txAccount, txRecipient, 100_000)
-      )
-      TRANSFERS.push(
-        await createOutgoingTransfer(txAccount, txRecipient, 200_000)
-      )
+      TRANSFERS.push(await createIncomingTransfer(txAccount))
+      TRANSFERS.push(await createOutgoingTransfer(txAccount, txRecipient, 100_000))
+      TRANSFERS.push(await createOutgoingTransfer(txAccount, txRecipient, 200_000))
     })
 
     test('should return the transfer history of the account', async () => {
