@@ -1,22 +1,16 @@
-import 'dotenv/config'
-import { execSync, spawn } from 'child_process'
-import Waiter from '../helpers/waiter.js'
-
-const DATA_DIR = process.env.TEST_BITCOIN_CLI_DATA_DIR || `${process.env.HOME}/.bitcoin`
-const HOST = process.env.TEST_ELECTRUM_SERVER_HOST || '127.0.0.1'
-const PORT = process.env.TEST_ELECTRUM_SERVER_PORT || '7777'
-const PORT_NUM = parseInt(PORT, 10)
-const ZMQ_PORT = process.env.TEST_BITCOIN_ZMQ_PORT || '29000'
+import { spawn, execSync } from 'child_process'
+import { DATA_DIR, HOST, ELECTRUM_PORT, ZMQ_PORT, RPC_PORT } from '../config.js'
+import { BitcoinCli, Waiter } from '../helpers/index.js'
 
 const waiter = new Waiter(DATA_DIR, HOST, ZMQ_PORT)
+const btc = new BitcoinCli(DATA_DIR, HOST, ZMQ_PORT, RPC_PORT)
 
 export default async () => {
-  console.log('\n')
-  console.log('🧪 [Test Setup] Initializing Bitcoin regtest environment...')
+  console.log('\n🧪 [Test Setup] Initializing Bitcoin regtest environment...')
 
   try {
     console.log('⛔ Stopping any previously running bitcoind instance...')
-    execSync(`bitcoin-cli -regtest -datadir=${DATA_DIR} stop`)
+    btc.stop()
   } catch {
     console.log('⚠️ No previous bitcoind instance was running.')
   }
@@ -28,37 +22,26 @@ export default async () => {
   execSync(`mkdir -p ${DATA_DIR}`)
 
   try {
-    console.log('🔍 Checking for processes using port 18443...')
-    execSync("lsof -i :18443 | grep LISTEN | awk '{print $2}' | xargs kill -9")
-    console.log('✅ Killed process on port 18443.')
+    console.log(`🔍 Checking for processes using port ${RPC_PORT}...`)
+    execSync(`lsof -i :${RPC_PORT} | grep LISTEN | awk '{print $2}' | xargs kill -9`)
+    console.log(`✅ Killed process on port ${RPC_PORT}.`)
   } catch {
-    console.log('⚠️ No process was using port 18443.')
+    console.log(`⚠️ No process was using port ${RPC_PORT}.`)
   }
 
   console.log('🚀 Starting bitcoind in regtest mode...')
-  execSync(`bitcoind -regtest -daemon \
-    -txindex=1 \
-    -fallbackfee=0.00010000 \
-    -paytxfee=0.00010000 \
-    -server=1 \
-    -minrelaytxfee=0.00000100 \
-    -zmqpubhashblock=tcp://${HOST}:${ZMQ_PORT} \
-    -datadir=${DATA_DIR}`)
-
+  btc.start()
   await waiter.waitUntilRpcReady()
   console.log('✅ bitcoind started.')
 
-  console.log('💼 Creating new a wallet...')
-  execSync(`bitcoin-cli -regtest -datadir=${DATA_DIR} createwallet testwallet`)
+  console.log('💼 Creating new wallet `testwallet`...')
+  btc.call('createwallet testwallet')
+  btc.setWallet('testwallet')
 
-  console.log('⛏️ Mining 101 blocks...')
-  const minerAddr = execSync(
-    `bitcoin-cli -regtest -datadir=${DATA_DIR} -rpcwallet=testwallet getnewaddress`
-  ).toString().trim()
+  console.log('⛏️ Mining 101 blocks for initial funds...')
+  const minerAddr = btc.call('getnewaddress')
   const blocksPromise = waiter.waitForBlocks(101)
-  execSync(
-    `bitcoin-cli -regtest -datadir=${DATA_DIR} -rpcwallet=testwallet generatetoaddress 101 ${minerAddr}`
-  )
+  btc.call(`generatetoaddress 101 ${minerAddr}`)
   await blocksPromise
   console.log('✅ Initial funds added.')
 
@@ -66,10 +49,10 @@ export default async () => {
   spawn('electrs', [
     '--network', 'regtest',
     '--daemon-dir', DATA_DIR,
-    '--electrum-rpc-addr', `${HOST}:${PORT}`
+    '--electrum-rpc-addr', `${HOST}:${ELECTRUM_PORT}`
   ], { stdio: 'ignore' })
 
-  await waiter.waitUntilPortOpen(HOST, PORT_NUM)
+  await waiter.waitUntilPortOpen(HOST, ELECTRUM_PORT)
   console.log('✅ Electrum server is running.')
 
   console.log('🎯 Test environment ready.\n')

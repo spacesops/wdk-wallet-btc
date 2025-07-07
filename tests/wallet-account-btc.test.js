@@ -4,10 +4,12 @@ import { mnemonicToSeedSync } from 'bip39'
 
 import WalletAccountBtc from '../src/wallet-account-btc.js'
 import { BitcoinCli, Waiter } from './helpers'
+import { DATA_DIR, HOST, ELECTRUM_PORT, ZMQ_PORT, RPC_PORT } from './config.js'
 
 const SEED_PHRASE = 'cook voyage document eight skate token alien guide drink uncle term abuse'
 const INVALID_SEED_PHRASE = 'this is not valid mnemonic'
 const SEED = mnemonicToSeedSync(SEED_PHRASE)
+
 const ACCOUNT = {
   index: 0,
   path: "m/84'/0'/0'/0/0",
@@ -17,22 +19,24 @@ const ACCOUNT = {
     publicKey: '035a48902f37c03901f36fea0a06aef2be29d9c55da559f5bd02c2d02d2b516382'
   }
 }
+
 const RELATIVE_PATH = ACCOUNT.path.replace(/^m\/84'\/0'\//, '')
-const DATA_DIR = process.env.TEST_BITCOIN_CLI_DATA_DIR || `${process.env.HOME}/.bitcoin`
+
 const CONFIG = {
-  host: process.env.TEST_ELECTRUM_SERVER_HOST || '127.0.0.1',
-  port: Number(process.env.TEST_ELECTRUM_SERVER_PORT || 7777),
+  host: HOST,
+  port: ELECTRUM_PORT,
   network: 'regtest'
 }
-const ZMQ_PORT = process.env.TEST_BITCOIN_ZMQ_PORT || '29000'
-const btc = new BitcoinCli(DATA_DIR)
-const waiter = new Waiter(DATA_DIR, CONFIG.host, ZMQ_PORT)
+
+const btc = new BitcoinCli(DATA_DIR, HOST, ZMQ_PORT, RPC_PORT, 'testwallet')
+const waiter = new Waiter(DATA_DIR, HOST, ZMQ_PORT)
 
 describe('WalletAccountBtc', () => {
   let minerAddr
+
   async function mineBlock () {
     if (!minerAddr) {
-      minerAddr = btc.call('getnewaddress').toString().trim()
+      minerAddr = btc.call('getnewaddress').trim()
     }
     const blockPromise = waiter.waitForBlocks(1)
     btc.call(`generatetoaddress 1 ${minerAddr}`)
@@ -41,7 +45,7 @@ describe('WalletAccountBtc', () => {
 
   async function createAndFundAccount () {
     const account = new WalletAccountBtc(SEED_PHRASE, RELATIVE_PATH, CONFIG)
-    const recipient = btc.call('getnewaddress').toString().trim()
+    const recipient = btc.call('getnewaddress').trim()
     btc.call(`sendtoaddress ${ACCOUNT.address} 0.01`)
     await mineBlock()
     return { account, recipient }
@@ -49,7 +53,7 @@ describe('WalletAccountBtc', () => {
 
   let account, recipient
   beforeAll(async () => {
-    ;({ account, recipient } = await createAndFundAccount())
+    ({ account, recipient } = await createAndFundAccount())
   })
 
   afterAll(() => {
@@ -141,6 +145,7 @@ describe('WalletAccountBtc', () => {
       const mempoolEntry = JSON.parse(btc.call(`getmempoolentry ${hash}`))
       const exactFee = Math.round(mempoolEntry.fees.base * 1e8)
       expect(exactFee).toBe(fee)
+
       await mineBlock()
       const txInfo = JSON.parse(btc.call(`gettransaction ${hash}`))
       expect(txInfo.txid).toBe(hash)
@@ -193,9 +198,9 @@ describe('WalletAccountBtc', () => {
 
     test('should successfully quote a transaction', async () => {
       const TRANSACTION = { to: recipient, value: 100_000 }
-      const expected_fee = computeExpectedFee(TRANSACTION)
+      const expectedFee = computeExpectedFee(TRANSACTION)
       const { fee } = await account.quoteSendTransaction(TRANSACTION)
-      expect(fee).toBe(expected_fee)
+      expect(fee).toBe(expectedFee)
     })
   })
 

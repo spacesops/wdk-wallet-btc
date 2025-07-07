@@ -1,21 +1,16 @@
-import 'dotenv/config'
 import { execSync } from 'child_process'
-import Waiter from '../helpers/waiter.js'
-
-const DATA_DIR = process.env.TEST_BITCOIN_CLI_DATA_DIR || `${process.env.HOME}/.bitcoin`
-const HOST = process.env.TEST_ELECTRUM_SERVER_HOST || '127.0.0.1'
-const PORT = process.env.TEST_ELECTRUM_SERVER_PORT || '7777'
-const PORT_NUM = parseInt(PORT, 10)
-const ZMQ_PORT = process.env.TEST_BITCOIN_ZMQ_PORT || '29000'
+import { DATA_DIR, HOST, ELECTRUM_PORT, ZMQ_PORT, RPC_PORT } from '../config.js'
+import { BitcoinCli, Waiter } from '../helpers/index.js'
 
 const waiter = new Waiter(DATA_DIR, HOST, ZMQ_PORT)
+const btc = new BitcoinCli(DATA_DIR, HOST, ZMQ_PORT, RPC_PORT, null)
 
 export default async () => {
   console.log('\n🧹 [Test Teardown] Tearing down test environment...')
 
   try {
     console.log('⛔ Stopping bitcoind...')
-    execSync(`bitcoin-cli -regtest -datadir=${DATA_DIR} stop`)
+    btc.stop()
     await waiter.waitUntilRpcStopped()
     console.log('✅ bitcoind stopped.')
   } catch {
@@ -24,7 +19,7 @@ export default async () => {
 
   console.log('🔌 Waiting for Electrum server to fail...')
   try {
-    await waiter.waitUntilPortClosed(HOST, PORT_NUM)
+    await waiter.waitUntilPortClosed(HOST, ELECTRUM_PORT)
     console.log('✅ Electrum server stopped.')
   } catch {
     console.log('⚠️ Electrum server did not exit in time.')
