@@ -139,7 +139,7 @@ export type KeyPair = import("@wdk/wallet").KeyPair;
 export type TransactionResult = import("@wdk/wallet").TransactionResult;
 export type TransferOptions = import("@wdk/wallet").TransferOptions;
 export type TransferResult = import("@wdk/wallet").TransferResult;
-export type IWalletAccount = any;
+export type IWalletAccount = import("@wdk/wallet").IWalletAccount;
 export type BtcTransaction = {
     /**
      * - The transaction's recipient.
