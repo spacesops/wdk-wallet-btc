@@ -383,10 +383,23 @@ export default class WalletAccountBtc {
    * @param {string} hash - The transaction's hash.
    * @returns {Promise<BtcTransactionReceipt | null>} - The receipt, or null if the transaction has not been included in a block yet.
    */
-  async getTransactionReceipt (txid) {
-    return this._electrumClient.getTransaction(txid).catch(() => null)
+  async getTransactionReceipt(txid) {
+    try {
+      return await this._electrumClient.getTransaction(txid);
+    } catch (error) {
+      const msg = error && error.message ? error.message : '';
+      if (
+        msg.includes('No such mempool transaction') ||
+        msg.includes('No such transaction') ||
+        msg.includes('transaction not found') ||
+        msg.includes('code -5')
+      ) {
+        return null;
+      }
+      throw error;
+    }
   }
-
+  
   /**
    * Disposes the wallet account, erasing the private key from the memory and closing the connection with the electrum server.
    */
