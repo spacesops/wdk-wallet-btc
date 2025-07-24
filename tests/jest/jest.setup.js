@@ -23,14 +23,14 @@ export default async () => {
   }
 
   console.log('🧹 Removing old regtest data...')
-  execSync(`rm -rf ${DATA_DIR}/regtest`)
+  execSync(`rm -rf ${DATA_DIR}/regtest`, { stdio: 'ignore' })
 
   console.log(`📁 Ensuring data directory exists at ${DATA_DIR}...`)
-  execSync(`mkdir -p ${DATA_DIR}`)
+  execSync(`mkdir -p ${DATA_DIR}`, { stdio: 'ignore' })
 
   try {
     console.log(`🔍 Checking for processes using port ${PORT}...`)
-    execSync(`lsof -i :${PORT} | grep LISTEN | awk '{print $2}' | xargs kill -9`)
+    execSync(`lsof -i :${PORT} | grep LISTEN | awk '{print $2}' | xargs kill -9`, { stdio: 'ignore' })
     console.log(`✅ Killed process on port ${PORT}.`)
   } catch {
     console.log(`⚠️ No process was using port ${PORT}.`)

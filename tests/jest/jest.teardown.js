@@ -18,7 +18,6 @@ export default async () => {
   try {
     console.log('⛔ Stopping bitcoind...')
     btc.stop()
-    await btc.waiter.waitUntilRpcStopped()
     console.log('✅ bitcoind stopped.')
   } catch {
     console.log('⚠️ bitcoind was not running or already stopped.')
@@ -34,7 +33,7 @@ export default async () => {
 
   try {
     console.log('🗑️ Removing regtest chain data...')
-    execSync(`rm -rf ${DATA_DIR}`)
+    execSync(`rm -rf ${DATA_DIR}`, { stdio: 'ignore' })
     console.log('✅ Chain data removed.')
   } catch {
     console.log('⚠️ Failed to remove chain data.')

@@ -1,6 +1,6 @@
 import dotenv from 'dotenv'
 
-dotenv.config({ path: './.env.test' })
+dotenv.config({ path: './.env.test', quiet: true })
 
 export const HOST = process.env.TEST_HOST || '127.0.0.1'
 export const PORT = +process.env.TEST_BITCOIN_CLI_PORT || 18_443
