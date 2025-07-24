@@ -153,9 +153,9 @@ describe('WalletAccountBtc', () => {
 
   describe('sendTransaction', () => {
     test('should successfully send a transaction', async () => {
-      const TRANSACTION = { 
+      const TRANSACTION = {
         to: recipient,
-        value: 1_000 
+        value: 1_000
       }
 
       const { hash, fee } = await account.sendTransaction(TRANSACTION)
@@ -192,8 +192,8 @@ describe('WalletAccountBtc', () => {
 
   describe('quoteSendTransaction', () => {
     test('should successfully quote a transaction', async () => {
-      const TRANSACTION = { 
-        to: recipient, 
+      const TRANSACTION = {
+        to: recipient,
         value: 1_000
       }
 
@@ -229,7 +229,7 @@ describe('WalletAccountBtc', () => {
 
       const transaction = btc.getTransaction(txid)
       const fee = Math.round(Math.abs(transaction.fee) * 1e+8)
-      
+
       const height = btc.getBlockCount()
 
       return {
@@ -249,9 +249,9 @@ describe('WalletAccountBtc', () => {
 
       const recipient = btc.getNewAddress()
 
-      const { hash, fee } = await account.sendTransaction({ 
-        to: recipient, 
-        value: 100_000 
+      const { hash, fee } = await account.sendTransaction({
+        to: recipient,
+        value: 100_000
       })
 
       await btc.mine()
@@ -274,7 +274,7 @@ describe('WalletAccountBtc', () => {
       account = new WalletAccountBtc(SEED_PHRASE, "0'/0/1", CONFIGURATION)
 
       for (let i = 0; i < 5; i++) {
-        const transfer = i % 2 == 0
+        const transfer = i % 2 === 0
           ? await createIncomingTransfer()
           : await createOutgoingTransfer()
 

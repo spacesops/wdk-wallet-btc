@@ -11,7 +11,7 @@ export default class BitcoinCli {
     const { host, port, dataDir } = config
 
     this._app = `bitcoin-cli -regtest -rpcconnect=${host} -rpcport=${port} -datadir=${dataDir}`
- 
+
     this._waiter = new Waiter(this, config)
   }
 

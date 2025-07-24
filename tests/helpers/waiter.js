@@ -7,7 +7,7 @@ const DEFAULT_INTERVAL = 50
 const DEFAULT_TIMEOUT = 3_000
 
 export default class Waiter {
-  constructor(bitcoin, config) {
+  constructor (bitcoin, config) {
     this._btc = bitcoin
 
     const { host, electrumPort, zmqPort, interval, timeout } = config
@@ -23,7 +23,7 @@ export default class Waiter {
     this._topics = new Set()
   }
 
-  async waitUntilRpcReady() {
+  async waitUntilRpcReady () {
     return this._waitUntilCondition(() => {
       try {
         this._btc.getBlockchainInfo()
@@ -34,7 +34,7 @@ export default class Waiter {
     })
   }
 
-  async waitUntilRpcStopped() {
+  async waitUntilRpcStopped () {
     return this._waitUntilCondition(() => {
       try {
         this._btc.getBlockchainInfo()
@@ -45,38 +45,38 @@ export default class Waiter {
     })
   }
 
-  async waitUntilPortOpen(host, port) {
+  async waitUntilPortOpen (host, port) {
     return this._waitUntilCondition(() =>
-      new Promise(res => {
+      new Promise(resolve => {
         const s = net.createConnection({ host, port }, () => {
           s.end()
-          res(true)
+          resolve(true)
         })
         s.on('error', () => {
           s.destroy()
-          res(false)
+          resolve(false)
         })
       })
     )
   }
 
-  async waitUntilPortClosed(host, port) {
+  async waitUntilPortClosed (host, port) {
     return this._waitUntilCondition(() =>
-      new Promise(res => {
+      new Promise(resolve => {
         const s = net.createConnection({ host, port }, () => {
           s.end()
-          res(false)
+          resolve(false)
         })
         s.on('error', () => {
           s.destroy()
-          res(true)
+          resolve(true)
         })
       })
     )
   }
 
-  async waitForBlocks(blocks) {
-    const timeout = new Promise((_, reject) =>
+  async waitForBlocks (blocks) {
+    const timeout = new Promise((resolve, reject) =>
       setTimeout(() => reject(new Error('Timeout waiting for blocks.')), this._timeout)
     )
     const task = (async () => {
@@ -86,14 +86,14 @@ export default class Waiter {
     await Promise.race([timeout, task])
   }
 
-  _ensureTopic(topic) {
+  _ensureTopic (topic) {
     if (!this._topics.has(topic)) {
       this._sub.subscribe(topic)
       this._topics.add(topic)
     }
   }
 
-  _getElectrumHeight() {
+  _getElectrumHeight () {
     return new Promise((resolve, reject) => {
       const socket = new net.Socket()
       socket.setEncoding('utf8')
@@ -123,7 +123,7 @@ export default class Waiter {
     })
   }
 
-  async _waitForCoreBlocks(expected) {
+  async _waitForCoreBlocks (expected) {
     this._ensureTopic('hashblock')
 
     let count = 0
@@ -135,7 +135,7 @@ export default class Waiter {
     }
   }
 
-  async _waitForElectrumSync() {
+  async _waitForElectrumSync () {
     const target = this._btc.getBlockCount()
     await this._waitUntilCondition(async () => {
       const height = await this._getElectrumHeight()
@@ -143,14 +143,14 @@ export default class Waiter {
     })
   }
 
-  async _waitUntilCondition(fn) {
+  async _waitUntilCondition (fn) {
     const start = Date.now()
     while (true) {
       if (await fn()) return
       if (Date.now() - start > this._timeout) {
         throw new Error('Timeout waiting for condition.')
       }
-      await new Promise(r => setTimeout(r, this._interval))
+      await new Promise(resolve => setTimeout(resolve, this._interval))
     }
   }
 }

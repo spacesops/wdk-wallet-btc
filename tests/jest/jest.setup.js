@@ -3,7 +3,7 @@ import { spawn, execSync } from 'child_process'
 import { HOST, PORT, ELECTRUM_PORT, ZMQ_PORT, DATA_DIR } from '../config.js'
 
 import BitcoinCli from '../helpers/bitcoin-cli.js'
- 
+
 const btc = new BitcoinCli({
   host: HOST,
   port: PORT,

@@ -65,7 +65,7 @@ describe('WalletManagerBtc', () => {
 
       const feeRates = await wallet.getFeeRates()
 
-      expect(global.fetch).toHaveBeenCalledWith("https://mempool.space/api/v1/fees/recommended")
+      expect(global.fetch).toHaveBeenCalledWith('https://mempool.space/api/v1/fees/recommended')
 
       expect(feeRates).toEqual({
         normal: DUMMY_FEE_RATES.hourFee,
