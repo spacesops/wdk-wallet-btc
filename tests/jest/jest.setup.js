@@ -2,7 +2,7 @@ import { spawn, execSync } from 'child_process'
 
 import { HOST, PORT, ELECTRUM_PORT, ZMQ_PORT, DATA_DIR } from '../config.js'
 
-import BitcoinCli from '../bitcoin-cli/index.js'
+import BitcoinCli from '../helpers/bitcoin-cli.js'
  
 const btc = new BitcoinCli({
   host: HOST,
@@ -18,20 +18,19 @@ export default async () => {
   try {
     console.log('⛔ Stopping any previously running bitcoind instance...')
     btc.stop()
-    await btc.waiter.waitUntilRpcStopped()
   } catch {
     console.log('⚠️ No previous bitcoind instance was running.')
   }
 
   console.log('🧹 Removing old regtest data...')
-  execSync(`rm -rf ${DATA_DIR}/regtest`, { stdio: 'ignore' })
+  execSync(`rm -rf ${DATA_DIR}/regtest`)
 
   console.log(`📁 Ensuring data directory exists at ${DATA_DIR}...`)
   execSync(`mkdir -p ${DATA_DIR}`)
 
   try {
     console.log(`🔍 Checking for processes using port ${PORT}...`)
-    execSync(`lsof -i :${PORT} | grep LISTEN | awk '{print $2}' | xargs kill -9`, { stdio: 'ignore' })
+    execSync(`lsof -i :${PORT} | grep LISTEN | awk '{print $2}' | xargs kill -9`)
     console.log(`✅ Killed process on port ${PORT}.`)
   } catch {
     console.log(`⚠️ No process was using port ${PORT}.`)
@@ -47,7 +46,7 @@ export default async () => {
     '--network', 'regtest',
     '--daemon-dir', DATA_DIR,
     '--electrum-rpc-addr', `${HOST}:${ELECTRUM_PORT}`
-  ], { stdio: 'ignore' })
+  ])
 
   await btc.waiter.waitUntilPortOpen(HOST, ELECTRUM_PORT)
   console.log('✅ Electrum server is running.')

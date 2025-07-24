@@ -35,11 +35,11 @@ export default class BitcoinCli {
       `-rpcbind=${host} ` +
       `-rpcport=${port} ` +
       `-datadir=${dataDir} ` +
-      `-zmqpubhashblock=tcp://${host}:${zmqPort}`, { stdio: 'ignore' })
+      `-zmqpubhashblock=tcp://${host}:${zmqPort}`)
   }
 
   stop () {
-    execSync(`${this._app} stop`, { stdio: 'ignore' })
+    execSync(`${this._app} stop`)
   }
 
   call (cmd, { rawResult = false } = { }) {

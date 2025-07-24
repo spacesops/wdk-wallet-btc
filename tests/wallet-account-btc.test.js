@@ -4,7 +4,7 @@ import { mnemonicToSeedSync } from 'bip39'
 
 import { HOST, PORT, ELECTRUM_PORT, ZMQ_PORT, DATA_DIR } from './config.js'
 
-import BitcoinCli from './bitcoin-cli/index.js'
+import BitcoinCli from './helpers/bitcoin-cli.js'
 
 import { WalletAccountBtc } from '../index.js'
 

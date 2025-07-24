@@ -2,7 +2,7 @@ import { execSync } from 'child_process'
 
 import { HOST, PORT, ELECTRUM_PORT, ZMQ_PORT, DATA_DIR } from '../config.js'
 
-import BitcoinCli from '../bitcoin-cli/index.js'
+import BitcoinCli from '../helpers/bitcoin-cli.js'
 
 const btc = new BitcoinCli({
   host: HOST,
@@ -17,7 +17,8 @@ export default async () => {
 
   try {
     console.log('⛔ Stopping bitcoind...')
-    await btc.stop()
+    btc.stop()
+    await btc.waiter.waitUntilRpcStopped()
     console.log('✅ bitcoind stopped.')
   } catch {
     console.log('⚠️ bitcoind was not running or already stopped.')
