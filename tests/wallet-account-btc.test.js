@@ -187,6 +187,8 @@ describe('WalletAccountBtc', () => {
 
       await expect(account.sendTransaction({ to: recipient, value: 1_000 }))
         .rejects.toThrow('No unspent outputs available')
+
+      account.dispose()
     })
   })
 
@@ -280,6 +282,10 @@ describe('WalletAccountBtc', () => {
 
         TRANSFERS.push(transfer)
       }
+    })
+
+    afterAll(() => {
+      account.dispose()
     })
 
     test('should return the full transfer history', async () => {

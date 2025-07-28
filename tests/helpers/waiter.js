@@ -15,6 +15,7 @@ export default class Waiter {
     this._host = host
     this._port = electrumPort
     this._sub = new zmq.Subscriber()
+    this._sub.linger = 0
     this._sub.connect(`tcp://${host}:${zmqPort}`)
 
     this._interval = interval ?? DEFAULT_INTERVAL
@@ -34,17 +35,6 @@ export default class Waiter {
     })
   }
 
-  async waitUntilRpcStopped () {
-    return this._waitUntilCondition(() => {
-      try {
-        this._btc.getBlockchainInfo()
-        return false
-      } catch {
-        return true
-      }
-    })
-  }
-
   async waitUntilPortOpen (host, port) {
     return this._waitUntilCondition(() =>
       new Promise(resolve => {
@@ -52,6 +42,7 @@ export default class Waiter {
           s.end()
           resolve(true)
         })
+        s.unref()
         s.on('error', () => {
           s.destroy()
           resolve(false)
@@ -76,13 +67,18 @@ export default class Waiter {
   }
 
   async waitForBlocks (blocks) {
-    const timeout = new Promise((resolve, reject) =>
-      setTimeout(() => reject(new Error('Timeout waiting for blocks.')), this._timeout)
-    )
+    const timeout = new Promise((resolve, reject) => {
+      const t = setTimeout(() => {
+        reject(new Error('Timeout waiting for blocks.'))
+      }, this._timeout)
+      t.unref()
+    })
+
     const task = (async () => {
       await this._waitForCoreBlocks(blocks)
       await this._waitForElectrumSync()
     })()
+
     await Promise.race([timeout, task])
   }
 
