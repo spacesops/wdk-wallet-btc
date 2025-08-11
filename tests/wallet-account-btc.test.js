@@ -32,7 +32,6 @@ const ACCOUNT_BIP44 = {
   }
 }
 
-
 const CONFIGURATION = {
   host: HOST,
   port: ELECTRUM_PORT,
@@ -97,12 +96,11 @@ describe('WalletAccountBtc', () => {
     })
 
     test('should successfully initialize an account for the given seed and path (bip-84)', () => {
-      const account = new WalletAccountBtc(SEED, "0'/0/0", { bip : 84 })
+      const account = new WalletAccountBtc(SEED, "0'/0/0", { bip: 84 })
 
       expect(account.index).toBe(ACCOUNT_BIP84.index)
 
       expect(account.path).toBe(ACCOUNT_BIP84.path)
-
 
       expect(account.keyPair).toEqual({
         privateKey: new Uint8Array(Buffer.from(ACCOUNT_BIP84.keyPair.privateKey, 'hex')),
@@ -122,7 +120,7 @@ describe('WalletAccountBtc', () => {
         .toThrow(/Expected BIP32Path/)
     })
 
-    test('should throw for unsupported bip type',() => {
+    test('should throw for unsupported bip type', () => {
       // eslint-disable-next-line no-new
       expect(() => new WalletAccountBtc(SEED_PHRASE, "0'/0/0", { bip: 33 }))
         .toThrow(/Unsupported BIP type/)
@@ -133,7 +131,7 @@ describe('WalletAccountBtc', () => {
     test('should return the correct address', async () => {
       const result = await account.getAddress()
 
-      expect(result).toBe(ACCOUNT.address)
+      expect(result).toBe(ACCOUNT_BIP44.address)
     })
   })
 

@@ -1,4 +1,4 @@
-export default class WalletManagerBtc {
+export default class WalletManagerBtc extends WalletManager {
     /**
      * Creates a new wallet manager for the bitcoin blockchain.
      *
@@ -6,13 +6,6 @@ export default class WalletManagerBtc {
      * @param {BtcWalletConfig} [config] - The configuration object.
      */
     constructor(seed: string | Uint8Array, config?: BtcWalletConfig);
-    /**
-     * The btc wallet configuration.
-     *
-     * @protected
-     * @type {BtcWalletConfig}
-     */
-    protected _config: BtcWalletConfig;
     /** @private */
     private _accounts;
     /**
@@ -35,17 +28,8 @@ export default class WalletManagerBtc {
      * @returns {Promise<WalletAccountBtc>} The account.
      */
     getAccountByPath(path: string): Promise<WalletAccountBtc>;
-    /**
-     * Returns the current fee rates.
-     *
-     * @returns {Promise<FeeRates>} The fee rates (in satoshis).
-     */
-    getFeeRates(): Promise<FeeRates>;
-    /**
-     * Disposes all the wallet accounts, erasing their private keys from the memory and closing the connection with the electrum server.
-     */
-    dispose(): void;
 }
 export type FeeRates = import("@wdk/wallet").FeeRates;
 export type BtcWalletConfig = import("./wallet-account-btc.js").BtcWalletConfig;
+import WalletManager from '@wdk/wallet';
 import WalletAccountBtc from './wallet-account-btc.js';

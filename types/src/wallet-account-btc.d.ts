@@ -122,15 +122,15 @@ export default class WalletAccountBtc implements IWalletAccount {
         skip?: number;
     }): Promise<BtcTransfer[]>;
     /**
+    * Returns a read-only copy of the account.
+    *
+    * @returns {Promise<never>} The read-only account.
+    */
+    toReadOnlyAccount(): Promise<never>;
+    /**
      * Disposes the wallet account, erasing the private key from the memory and closing the connection with the electrum server.
      */
     dispose(): void;
-    /**
-     * Returns a read-only copy of the account.
-     *
-     * @returns {Promise<never>} The read-only account.
-     */
-    toReadOnlyAccount(): Promise<never>;
     /** @private */
     private _getTransaction;
     /** @private */
@@ -142,7 +142,7 @@ export type KeyPair = import("@wdk/wallet").KeyPair;
 export type TransactionResult = import("@wdk/wallet").TransactionResult;
 export type TransferOptions = import("@wdk/wallet").TransferOptions;
 export type TransferResult = import("@wdk/wallet").TransferResult;
-export type IWalletAccount = any;
+export type IWalletAccount = import("@wdk/wallet").IWalletAccount;
 export type BtcTransaction = {
     /**
      * - The transaction's recipient.
