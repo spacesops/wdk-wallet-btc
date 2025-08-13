@@ -97,25 +97,16 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
         fee: BigNumber;
     }>;
     /**
-     * Collects enough UTXOs to cover `amount`.
-     *
-     * @protected
-     * @param {number} amount
-     * @param {string} address
-     * @returns {Promise<Array<any>>}
-     */
-    protected _getUtxos(amount: number, address: string): Promise<Array<any>>;
-    /**
-     * Creates and signs the PSBT, estimating fees, and returns the final tx.
+     * Creates and signs the PSBT using the precomputed (coinselect) fee.
      *
      * @protected
      * @param {Array<any>} utxoSet
      * @param {number} amount
      * @param {string} recipient
-     * @param {BigNumber} feeRate - sats/vB
+     * @param {number} selectorFee - total fee in sats (from coinselect)
      * @returns {Promise<{ txid: string, hex: string, fee: BigNumber }>}
      */
-    protected _getRawTransaction(utxoSet: Array<any>, amount: number, recipient: string, feeRate: BigNumber): Promise<{
+    protected _getRawTransaction(utxoSet: Array<any>, amount: number, recipient: string, selectorFee: number): Promise<{
         txid: string;
         hex: string;
         fee: BigNumber;

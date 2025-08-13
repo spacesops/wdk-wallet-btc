@@ -42,17 +42,31 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
         skip?: number;
     }): Promise<BtcTransfer[]>;
     /**
-     * Estimates the fee for a transaction.
+     * Build a fee-aware funding plan.
+     *
+     * Uses `descriptors` + `coinselect` to choose inputs, at a given feeRate (sats/vB). Returns the selected UTXOs (in the shape expected by the PSBT builder), the computed fee, and the resulting change value.
      *
      * @protected
-     * @param {{ fromAddress: string, to: string, value: number }} params
-     * @returns {Promise<number>}
+     * @param {Object} params
+     * @param {string} params.fromAddress - The sender's address.
+     * @param {string} params.toAddress - The recipient's address.
+     * @param {number} params.amount - Amount to send in satoshis.
+     * @param {number} params.feeRate - Fee rate in sats/vB.
+     * @returns {Promise<{ utxos: Array<any>, fee: number, changeValue: number }>}
+     *          utxos: [{ tx_hash, tx_pos, value, vout: { value, scriptPubKey: { hex } } }, ...]
+     *          fee: total fee in sats chosen by coinselect
+     *          changeValue: total inputs - amount - fee (sats)
      */
-    protected _estimateFee({ fromAddress, to, value }: {
+    protected _planSpend({ fromAddress, toAddress, amount, feeRate }: {
         fromAddress: string;
-        to: string;
-        value: number;
-    }): Promise<number>;
+        toAddress: string;
+        amount: number;
+        feeRate: number;
+    }): Promise<{
+        utxos: Array<any>;
+        fee: number;
+        changeValue: number;
+    }>;
 }
 export type TransactionResult = import("@wdk/wallet").TransactionResult;
 export type TransferOptions = import("@wdk/wallet").TransferOptions;
