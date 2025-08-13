@@ -16,7 +16,10 @@
 'use strict'
 
 import { WalletAccountReadOnly } from '@wdk/wallet'
-import { Psbt, address as btcAddress } from 'bitcoinjs-lib'
+import { address as btcAddress } from 'bitcoinjs-lib'
+import { coinselect } from '@bitcoinerlab/coinselect'
+import { DescriptorsFactory } from '@bitcoinerlab/descriptors'
+import * as ecc from '@bitcoinerlab/secp256k1'
 
 import ElectrumClient from './electrum-client.js'
 
@@ -48,7 +51,7 @@ import ElectrumClient from './electrum-client.js'
  * @property {string} [recipient] - The receiving address for outgoing transfers.
  */
 
-const DUST_LIMIT = 546
+const { Output } = DescriptorsFactory(ecc)
 
 export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
   /**
@@ -105,8 +108,11 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
    * @returns {Promise<Omit<TransactionResult, 'hash'>>} The transaction's quotes.
    */
   async quoteSendTransaction ({ to, value }) {
-    const address = await this.getAddress()
-    const fee = await this._estimateFee({ fromAddress: address, to, value })
+    const from = await this.getAddress()
+    let feeRate = await this._electrumClient.getFeeEstimateInSatsPerVb()
+    feeRate = Math.max(Number(feeRate), 1)
+
+    const { fee } = await this._planSpend({ fromAddress: from, toAddress: to, amount: value, feeRate })
     return { fee }
   }
 
@@ -219,82 +225,67 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
   }
 
   /**
-   * Estimates the fee for a transaction.
+   * Build a fee-aware funding plan.
+   *
+   * Uses `descriptors` + `coinselect` to choose inputs, at a given feeRate (sats/vB). Returns the selected UTXOs (in the shape expected by the PSBT builder), the computed fee, and the resulting change value.
    *
    * @protected
-   * @param {{ fromAddress: string, to: string, value: number }} params
-   * @returns {Promise<number>}
+   * @param {Object} params
+   * @param {string} params.fromAddress - The sender's address.
+   * @param {string} params.toAddress - The recipient's address.
+   * @param {number} params.amount - Amount to send in satoshis.
+   * @param {number} params.feeRate - Fee rate in sats/vB.
+   * @returns {Promise<{ utxos: Array<any>, fee: number, changeValue: number }>}
+   *          utxos: [{ tx_hash, tx_pos, value, vout: { value, scriptPubKey: { hex } } }, ...]
+   *          fee: total fee in sats chosen by coinselect
+   *          changeValue: total inputs - amount - fee (sats)
    */
-  async _estimateFee ({ fromAddress, to, value }) {
-    function encodeVarInt (n) {
-      if (n < 0xfd) return Buffer.from([n])
-      if (n <= 0xffff) {
-        const b = Buffer.alloc(3); b[0] = 0xfd; b.writeUInt16LE(n, 1); return b
-      }
-      const b = Buffer.alloc(5); b[0] = 0xfe; b.writeUInt32LE(n, 1); return b
-    }
+  async _planSpend ({ fromAddress, toAddress, amount, feeRate }) {
+    const net = this._electrumClient.network
 
-    function serializeWitness (items) {
-      const parts = [encodeVarInt(items.length)]
-      for (const it of items) {
-        parts.push(encodeVarInt(it.length), it)
-      }
-      return Buffer.concat(parts)
-    }
+    const ownScriptHex = btcAddress.toOutputScript(fromAddress, net).toString('hex')
 
-    let feeRate = await this._electrumClient.getFeeEstimateInSatsPerVb()
-    feeRate = Math.max(Number(feeRate), 1)
+    const ownOutput = new Output({ descriptor: `addr(${fromAddress})`, network: net })
+    const toOutput = new Output({ descriptor: `addr(${toAddress})`, network: net })
 
-    const utxos = await this._electrumClient.getUnspent(fromAddress)
-    if (!utxos || utxos.length === 0) {
+    const unspent = await this._electrumClient.getUnspent(fromAddress)
+    if (!unspent || unspent.length === 0) {
       throw new Error('No unspent outputs available.')
     }
 
-    const net = this._electrumClient.network
-    const fromScript = btcAddress.toOutputScript(fromAddress, net)
-    const toScript = btcAddress.toOutputScript(to, net)
+    const utxosForSelect = unspent.map(u => ({
+      output: ownOutput,
+      value: u.value,
+      __ref: u
+    }))
 
-    const selected = []
-    let total = 0
-    let fee = 0
+    const satsPerVb = Math.max(Number(feeRate), 1)
 
-    const dummySig = Buffer.alloc(71, 1)
-    const dummyPub = Buffer.alloc(33, 2)
-    const finalWitness = serializeWitness([dummySig, dummyPub])
+    const result = coinselect({
+      utxos: utxosForSelect,
+      targets: [{ output: toOutput, value: amount }],
+      remainder: ownOutput,
+      feeRate: satsPerVb
+    })
 
-    for (const u of utxos) {
-      selected.push(u)
-      total += u.value
-
-      const psbt = new Psbt({ network: net })
-      for (const s of selected) {
-        psbt.addInput({
-          hash: s.tx_hash,
-          index: s.tx_pos,
-          witnessUtxo: { script: fromScript, value: s.value }
-        })
-      }
-      psbt.addOutput({ script: toScript, value })
-
-      const provisionalChange = total - value
-      if (provisionalChange > DUST_LIMIT) {
-        psbt.addOutput({ script: fromScript, value: provisionalChange })
-      }
-
-      for (let i = 0; i < selected.length; i++) {
-        psbt.updateInput(i, { finalScriptWitness: finalWitness })
-      }
-
-      const vsize = psbt.extractTransaction().virtualSize()
-      fee = Math.max(Math.ceil(vsize * feeRate), 141)
-
-      if (total >= value + fee) break
-    }
-
-    if (total < value + fee) {
+    if (!result) {
       throw new Error('Insufficient balance to send the transaction.')
     }
 
-    return fee
+    const selected = result.utxos.map(u => {
+      const base = u.__ref
+      return {
+        ...base,
+        vout: {
+          value: base.value,
+          scriptPubKey: { hex: ownScriptHex }
+        }
+      }
+    })
+
+    const totalIn = selected.reduce((s, u) => s + u.value, 0)
+    const changeValue = totalIn - amount - result.fee
+
+    return { utxos: selected, fee: result.fee, changeValue }
   }
 }

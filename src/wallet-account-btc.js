@@ -14,17 +14,14 @@
 // limitations under the License.
 'use strict'
 
-import { crypto, initEccLib, payments, Psbt, networks, address as btcAddress } from 'bitcoinjs-lib'
+import { crypto, initEccLib, payments, Psbt, networks } from 'bitcoinjs-lib'
 import { BIP32Factory } from 'bip32'
 import BigNumber from 'bignumber.js'
-import { coinselect } from '@bitcoinerlab/coinselect'
-import { DescriptorsFactory } from '@bitcoinerlab/descriptors'
 
 import { hmac } from '@noble/hashes/hmac'
 import { sha512 } from '@noble/hashes/sha512'
 
 import * as bip39 from 'bip39'
-
 import * as ecc from '@bitcoinerlab/secp256k1'
 
 // eslint-disable-next-line camelcase
@@ -33,27 +30,20 @@ import { sodium_memzero } from 'sodium-universal'
 import WalletAccountReadOnlyBtc from './wallet-account-read-only-btc.js'
 
 /** @typedef {import('@wdk/wallet').IWalletAccount} IWalletAccount */
-
 /** @typedef {import('@wdk/wallet').KeyPair} KeyPair */
 /** @typedef {import('@wdk/wallet').TransactionResult} TransactionResult */
 /** @typedef {import('@wdk/wallet').TransferOptions} TransferOptions */
 /** @typedef {import('@wdk/wallet').TransferResult} TransferResult */
-
 /** @typedef {import('./wallet-account-read-only-btc.js').BtcTransaction} BtcTransaction */
 /** @typedef {import('./wallet-account-read-only-btc.js').BtcWalletConfig} BtcWalletConfig */
 
 const BIP_84_BTC_DERIVATION_PATH_PREFIX = "m/84'/0'"
-
 const DUST_LIMIT = 546
-
 const MASTER_SECRET = Buffer.from('Bitcoin seed', 'utf8')
 
 const BITCOIN = {
   wif: 0x80,
-  bip32: {
-    public: 0x0488b21e,
-    private: 0x0488ade4
-  },
+  bip32: { public: 0x0488b21e, private: 0x0488ade4 },
   messagePrefix: '\x18Bitcoin Signed Message:\n',
   bech32: 'bc',
   pubKeyHash: 0x00,
@@ -61,10 +51,7 @@ const BITCOIN = {
 }
 
 const bip32 = BIP32Factory(ecc)
-
 initEccLib(ecc)
-
-const { Output } = DescriptorsFactory(ecc)
 
 function derivePath (seed, path) {
   const masterKeyAndChainCodeBuffer = hmac(sha512, MASTER_SECRET, seed)
@@ -73,7 +60,6 @@ function derivePath (seed, path) {
   const chainCode = masterKeyAndChainCodeBuffer.slice(32)
 
   const masterNode = bip32.fromPrivateKey(Buffer.from(privateKey), Buffer.from(chainCode), BITCOIN)
-
   const account = masterNode.derivePath(path)
 
   sodium_memzero(privateKey)
@@ -97,7 +83,6 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
       if (!bip39.validateMnemonic(seed)) {
         throw new Error('The seed phrase is invalid.')
       }
-
       seed = bip39.mnemonicToSeedSync(seed)
     }
 
@@ -204,7 +189,6 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
    */
   async sendTransaction ({ to, value }) {
     const tx = await this._getTransaction({ recipient: to, amount: value })
-
     await this._electrumClient.broadcastTransaction(tx.hex)
     return { hash: tx.txid, fee: +tx.fee }
   }
@@ -252,114 +236,77 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
    * @returns {Promise<{ txid: string, hex: string, fee: BigNumber }>}
    */
   async _getTransaction ({ recipient, amount }) {
-    const address = await this.getAddress()
+    const from = await this.getAddress()
+
     let feeRate = await this._electrumClient.getFeeEstimateInSatsPerVb()
-    if (feeRate.lt(1)) {
-      feeRate = new BigNumber(1)
-    }
+    feeRate = Math.max(Number(feeRate), 1)
 
-    const utxoSet = await this._getUtxos(amount, address, feeRate)
+    const { utxos, fee } = await this._planSpend({
+      fromAddress: from,
+      toAddress: recipient,
+      amount,
+      feeRate: Number(feeRate)
+    })
 
-    const transaction = await this._getRawTransaction(utxoSet, amount, recipient, feeRate)
-
-    return transaction
+    const tx = await this._getRawTransaction(utxos, amount, recipient, fee)
+    return tx
   }
 
   /**
-   * Collects enough UTXOs to cover `amount`.
-   *
-   * @protected
-   * @param {number} amount
-   * @param {string} address
-   * @param {BigNumber} feeRate
-   * @returns {Promise<Array<any>>}
-   */
-  async _getUtxos (amount, address, feeRate) {
-    const unspent = await this._electrumClient.getUnspent(address)
-    if (!unspent || unspent.length === 0) throw new Error('No unspent outputs available.')
-
-    const net = this._electrumClient.network
-    const ownScriptHex = btcAddress.toOutputScript(address, net).toString('hex')
-
-    const ownOutput = new Output({ descriptor: `addr(${address})`, network: net })
-
-    const utxosForSelect = unspent.map(u => ({
-      output: ownOutput,
-      value: u.value,
-      __ref: u
-    }))
-
-    const targets = [{ output: ownOutput, value: amount }]
-
-    const result = coinselect({
-      utxos: utxosForSelect,
-      targets,
-      remainder: ownOutput,
-      feeRate: feeRate.toNumber()
-    })
-
-    if (!result) {
-      throw new Error('Insufficient balance to send the transaction.')
-    }
-
-    const selected = result.utxos.map(u => {
-      const base = u.__ref
-      return {
-        ...base,
-        vout: {
-          value: base.value,
-          scriptPubKey: { hex: ownScriptHex }
-        }
-      }
-    })
-
-    return selected
-  }
-
-  /**
-   * Creates and signs the PSBT, estimating fees, and returns the final tx.
+   * Creates and signs the PSBT using the precomputed (coinselect) fee.
    *
    * @protected
    * @param {Array<any>} utxoSet
    * @param {number} amount
    * @param {string} recipient
-   * @param {BigNumber} feeRate - sats/vB
+   * @param {number} selectorFee - total fee in sats (from coinselect)
    * @returns {Promise<{ txid: string, hex: string, fee: BigNumber }>}
    */
-  async _getRawTransaction (utxoSet, amount, recipient, feeRate) {
+  async _getRawTransaction (utxoSet, amount, recipient, selectorFee) {
     if (+amount <= DUST_LIMIT) throw new Error(`The amount must be bigger than the dust limit (= ${DUST_LIMIT}).`)
+
     const totalInput = utxoSet.reduce((sum, utxo) => sum.plus(utxo.value), new BigNumber(0))
 
-    const createPsbt = async (fee) => {
-      const psbt = new Psbt({ network: this._electrumClient.network })
-      utxoSet.forEach((utxo, index) => {
-        psbt.addInput({
-          hash: utxo.tx_hash,
-          index: utxo.tx_pos,
-          witnessUtxo: { script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'), value: utxo.value },
-          bip32Derivation: [{
-            masterFingerprint: this._masterNode.fingerprint,
-            path: this._path,
-            pubkey: this._account.publicKey
-          }]
-        })
+    let fee = new BigNumber(selectorFee)
+    if (!fee.isFinite() || fee.lte(0)) fee = new BigNumber(141)
+    if (fee.lt(141)) fee = new BigNumber(141)
+
+    const psbt = new Psbt({ network: this._electrumClient.network })
+
+    utxoSet.forEach((utxo, index) => {
+      psbt.addInput({
+        hash: utxo.tx_hash,
+        index: utxo.tx_pos,
+        witnessUtxo: {
+          script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'),
+          value: utxo.value
+        },
+        bip32Derivation: [{
+          masterFingerprint: this._masterNode.fingerprint,
+          path: this._path,
+          pubkey: this._account.publicKey
+        }]
       })
-      psbt.addOutput({ address: recipient, value: amount })
-      const change = totalInput.minus(amount).minus(fee)
-      if (change.isGreaterThan(DUST_LIMIT)) psbt.addOutput({ address: await this.getAddress(), value: change.toNumber() })
-      else if (change.isLessThan(0)) throw new Error('Insufficient balance to send the transaction.')
-      utxoSet.forEach((_, index) => psbt.signInputHD(index, this._masterNode))
-      psbt.finalizeAllInputs()
-      return psbt
+    })
+
+    psbt.addOutput({ address: recipient, value: amount })
+
+    let change = totalInput.minus(amount).minus(fee)
+    if (change.isLessThan(0)) {
+      throw new Error('Insufficient balance to send the transaction.')
     }
 
-    let psbt = await createPsbt(0)
-    const dummyTx = psbt.extractTransaction()
-    let estimatedFee = new BigNumber(feeRate).multipliedBy(dummyTx.virtualSize()).integerValue(BigNumber.ROUND_CEIL)
-    estimatedFee = BigNumber.max(estimatedFee, new BigNumber(141))
+    if (change.isGreaterThan(DUST_LIMIT)) {
+      psbt.addOutput({ address: await this.getAddress(), value: change.toNumber() })
+    } else {
+      fee = fee.plus(change)
+      change = new BigNumber(0)
+    }
 
-    psbt = await createPsbt(estimatedFee)
+    utxoSet.forEach((_, index) => psbt.signInputHD(index, this._masterNode))
+    psbt.finalizeAllInputs()
+
     const tx = psbt.extractTransaction()
-    return { txid: tx.getId(), hex: tx.toHex(), fee: estimatedFee }
+    return { txid: tx.getId(), hex: tx.toHex(), fee }
   }
 }
