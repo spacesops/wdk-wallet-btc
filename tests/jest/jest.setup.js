@@ -43,7 +43,6 @@ function checkElectrs () {
 }
 
 export default async () => {
-  return
   console.log('\n🧪 [Test Setup] Initializing Bitcoin regtest environment...')
 
   if (!checkBitcoinCore() || !checkElectrs()) {

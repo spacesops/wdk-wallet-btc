@@ -60,11 +60,7 @@ describe('WalletAccountBtc', () => {
   beforeAll(async () => {
     account = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", CONFIGURATION)
     const addr = await account.getAddress()
-    console.log(addr)
-    return
     recipient = bitcoin.getNewAddress()
-    console.log(recipient)
-    return
     bitcoin.sendToAddress(ACCOUNT_BIP44.address, 0.01)
 
     await waiter.mine()
