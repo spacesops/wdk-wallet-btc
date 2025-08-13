@@ -73,8 +73,8 @@ function derivePath (seed, path) {
   const account = masterNode.derivePath(path)
 
   sodium_memzero(privateKey)
-
   sodium_memzero(chainCode)
+  sodium_memzero(masterKeyAndChainCodeBuffer)
 
   return { masterNode, account }
 }
@@ -100,6 +100,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
     path = `${BIP_84_BTC_DERIVATION_PATH_PREFIX}/${path}`
 
     const { masterNode, account } = derivePath(seed, path)
+    sodium_memzero(seed)
 
     const netName = config.network || 'bitcoin'
     const net =
