@@ -309,7 +309,6 @@ export default class WalletAccountBtc {
       return null
     }
 
-    // now works with bitcoinjs-lib Transaction.ins
     const getInputValue = async (ins) => {
       let total = 0
       for (const input of ins) {
