@@ -1,5 +1,3 @@
-import fs from 'fs'
-import path from 'path'
 import { execSync, spawn } from 'child_process'
 
 import { HOST, PORT, ELECTRUM_PORT, ZMQ_PORT, DATA_DIR } from '../config.js'
@@ -55,12 +53,6 @@ export default async () => {
     process.exit(1)
   }
 
-  const envTestPath = path.resolve('.env.test')
-
-  if (!fs.existsSync(envTestPath)) {
-    console.warn('⚠️ No .env.test file found. Proceeding with default configuration values...')
-  }
-
   try {
     console.log('⛔ Stopping any previously running bitcoind instance...')
     bitcoin.stop()
@@ -84,7 +76,7 @@ export default async () => {
 
   console.log('🚀 Starting bitcoind in regtest mode...')
   bitcoin.start()
-  await waiter.waitUntilPortIsOpen(HOST, PORT)
+  await waiter.waitUntilBitcoinCoreIsStarted()
   console.log('✅ bitcoind started.')
 
   console.log('🔌 Starting Electrum server...')

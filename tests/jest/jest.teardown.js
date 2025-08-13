@@ -25,7 +25,7 @@ export default async () => {
 
   try {
     bitcoin.stop()
-    await waiter.waitUntilPortIsClosed(HOST, PORT)
+    await waiter.waitUntilBitcoinCoreIsStopped()
     console.log('✅ bitcoind stopped.')
   } catch {
     console.warn('⚠️  bitcoind was not running or already stopped.')
@@ -41,6 +41,13 @@ export default async () => {
   }
 
   console.log('🗑️ Removing regtest chain data...')
+
+  try {
+    execSync('rm -rf ./db', { stdio: 'ignore' })
+    console.log('✅ Database files removed.')
+  } catch {
+    console.warn('⚠️  Failed to remove database files.')
+  }
 
   try {
     execSync(`rm -rf ${DATA_DIR}`, { stdio: 'ignore' })

@@ -1,8 +1,7 @@
 {
   "include": [
     "index.js",
-    "src/wallet-manager-btc.js",
-    "src/wallet-account-btc.js"
+    "src/**/*.js",
   ],
   "compilerOptions": {
     "target": "ES2015",
@@ -11,11 +10,8 @@
     "allowJs": true,
     "declaration": true,
     "emitDeclarationOnly": true,
-    "noResolve": true,
     "skipLibCheck": true,
-    "typeRoots": [
-      "./node_modules/@types",
-      "./node_modules/@wdk"
-    ]
+    "stripInternal": true,
+    "outDir": "./types"
   }
 }

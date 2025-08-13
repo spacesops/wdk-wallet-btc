@@ -19,6 +19,30 @@ export default class Waiter {
     this._subscriber.connect(`tcp://${host}:${zmqPort}`)
   }
 
+  async waitUntilBitcoinCoreIsStarted () {
+    await this._waitUntilCondition(() => {
+      try {
+        this._bitcoin.getBlockchainInfo()
+
+        return true
+      } catch {
+        return false
+      }
+    })
+  }
+
+  async waitUntilBitcoinCoreIsStopped () {
+    await this._waitUntilCondition(() => {
+      try {
+        this._bitcoin.getBlockchainInfo()
+
+        return false
+      } catch {
+        return true
+      }
+    })
+  }
+
   async waitUntilPortIsOpen (host, port) {
     await this._waitUntilCondition(() => {
       return new Promise(resolve => {

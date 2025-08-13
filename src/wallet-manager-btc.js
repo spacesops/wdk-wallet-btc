@@ -13,7 +13,7 @@
 // limitations under the License.
 'use strict'
 
-import AbstractWalletManager from '@wdk/wallet'
+import WalletManager from '@wdk/wallet'
 
 import WalletAccountBtc from './wallet-account-btc.js'
 
@@ -23,7 +23,7 @@ import WalletAccountBtc from './wallet-account-btc.js'
 
 const MEMPOOL_SPACE_URL = 'https://mempool.space'
 
-export default class WalletManagerBtc extends AbstractWalletManager {
+export default class WalletManagerBtc extends WalletManager {
   /**
    * Creates a new wallet manager for the bitcoin blockchain.
    *

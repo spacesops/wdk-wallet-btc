@@ -1,5 +1,9 @@
 import { execSync } from 'child_process'
 
+const EXEC_SYNC_OPTIONS = {
+  stdio: ['inherit', 'pipe', 'ignore']
+}
+
 export default class BitcoinCli {
   constructor ({ wallet, ...config }) {
     const { host, port, dataDir } = config
@@ -27,18 +31,20 @@ export default class BitcoinCli {
       `-rpcbind=${host} ` +
       `-rpcport=${port} ` +
       `-datadir=${dataDir} ` +
-      `-zmqpubhashblock=tcp://${host}:${zmqPort}`, { stdio: 'ignore' })
+      `-zmqpubhashblock=tcp://${host}:${zmqPort}`, EXEC_SYNC_OPTIONS)
   }
 
   stop () {
-    execSync(`${this._cli} stop`, { stdio: 'ignore' })
+    execSync(`${this._cli} stop`, EXEC_SYNC_OPTIONS)
   }
 
   call (cmd, options = { }) {
     const { rawResult } = options
     const walletFlag = this._wallet ? `-rpcwallet=${this._wallet}` : ''
-    const fullCmd = `${this._cli} ${walletFlag} ${cmd}`
-    const result = execSync(fullCmd).toString().trim()
+    const command = `${this._cli} ${walletFlag} ${cmd}`
+    const output = execSync(command, EXEC_SYNC_OPTIONS)
+
+    const result = output.toString().trim()
 
     return rawResult ? result : JSON.parse(result)
   }
@@ -66,11 +72,10 @@ export default class BitcoinCli {
   getTransaction (txid) {
     return this.call(`gettransaction ${txid}`)
   }
-  
+
   getRawTransaction (txid) {
     return this.call(`getrawtransaction ${txid} true`)
   }
-
 
   getBlockCount () {
     return this.call('getblockcount')

@@ -18,6 +18,7 @@ import { connect as __tlsConnect } from 'tls'
 import { networks, address as _address, crypto, Transaction } from 'bitcoinjs-lib'
 import BigNumber from 'bignumber.js'
 
+/** @internal */
 export default class ElectrumClient {
   constructor (config = {}) {
     this._network = networks[config.network || 'bitcoin']
