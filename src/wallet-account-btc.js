@@ -228,8 +228,13 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
    */
   dispose () {
     sodium_memzero(this._account.privateKey)
+    sodium_memzero(this._account.chainCode)
+
+    sodium_memzero(this._masterNode.privateKey)
+    sodium_memzero(this._masterNode.chainCode)
 
     this._account = undefined
+    this._masterNode = undefined
 
     this._electrumClient.disconnect()
   }
