@@ -1,12 +1,18 @@
 import { execSync, spawn } from 'child_process'
 
-import { HOST, PORT, ELECTRUM_PORT, ZMQ_PORT, DATA_DIR } from '../config.js'
+import {
+  HOST,
+  PORT,
+  ELECTRUM_PORT,
+  ZMQ_PORT,
+  DATA_DIR,
+  BITCOIND_PATH,
+  BITCOIN_CORE_VERSION,
+  ELECTRS_VERSION,
+  ELECTRS_PATH
+} from '../config.js'
 
 import { BitcoinCli, Waiter } from '../helpers/index.js'
-
-const BITCOIN_CORE_VERSION = 'v29.'
-
-const ELECTRS_VERSION = 'v0.10.10'
 
 const bitcoin = new BitcoinCli({
   host: HOST,
@@ -24,7 +30,7 @@ const waiter = new Waiter(bitcoin, {
 
 function checkBitcoinCore () {
   try {
-    const buffer = execSync('bitcoind --version', { stdio: ['inherit', 'pipe', 'ignore'] })
+    const buffer = execSync(`${BITCOIND_PATH} --version`, { stdio: ['inherit', 'pipe', 'ignore'] })
     const output = buffer.toString()
     return output.includes(BITCOIN_CORE_VERSION)
   } catch {
@@ -34,7 +40,7 @@ function checkBitcoinCore () {
 
 function checkElectrs () {
   try {
-    const buffer = execSync('electrs --version', { stdio: ['inherit', 'pipe', 'ignore'] })
+    const buffer = execSync(`${ELECTRS_PATH} --version`, { stdio: ['inherit', 'pipe', 'ignore'] })
     const output = buffer.toString()
     return output.includes(ELECTRS_VERSION)
   } catch {
@@ -47,8 +53,8 @@ export default async () => {
 
   if (!checkBitcoinCore() || !checkElectrs()) {
     console.error('❗ You are missing the following tools:')
-    console.error(`${checkBitcoinCore() ? '✅' : '❌'} Bitcoin Core\tv28.x.x+ - install here: https://bitcoin.org/en/download`)
-    console.error(`${checkElectrs() ? '✅' : '❌'} Electrs\tv0.10.x+ - install here: https://github.com/romanz/electrs/blob/master/doc/install.md`)
+    console.error(`${checkBitcoinCore() ? '✅' : '❌'} Bitcoin Core\t${BITCOIN_CORE_VERSION}+ - install here: https://bitcoin.org/en/download`)
+    console.error(`${checkElectrs() ? '✅' : '❌'} Electrs\t${ELECTRS_VERSION}+ - install here: https://github.com/romanz/electrs/blob/master/doc/install.md`)
 
     process.exit(1)
   }
@@ -80,7 +86,7 @@ export default async () => {
   console.log('✅ bitcoind started.')
 
   console.log('🔌 Starting Electrum server...')
-  spawn('electrs', [
+  spawn(ELECTRS_PATH, [
     '--network', 'regtest',
     '--daemon-dir', DATA_DIR,
     '--electrum-rpc-addr', `${HOST}:${ELECTRUM_PORT}`
