@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals'
 
 import WalletManagerBtc, { WalletAccountBtc } from '../index.js'
-
-const SEED_PHRASE = 'cook voyage document eight skate token alien guide drink uncle term abuse'
+import { SEED_PHRASE } from './helpers/account-fixtures.js'
 
 describe('WalletManagerBtc', () => {
   let wallet
