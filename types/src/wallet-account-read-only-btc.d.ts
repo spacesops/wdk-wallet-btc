@@ -28,12 +28,12 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
      */
     protected _network: import("bitcoinjs-lib").Network;
     /**
-     * Returns a transaction's receipt if it is confirmed in a block.
+     * Returns a transaction's receipt.
      *
      * @param {string} hash - The transaction's hash.
-     * @returns {Promise<import('bitcoinjs-lib').Transaction | null>} - The receipt, or null if not yet included in a block.
+     * @returns {Promise<BtcTransactionReceipt | null>} – The receipt, or null if the transaction has not been included in a block yet.
      */
-    getTransactionReceipt(hash: string): Promise<import("bitcoinjs-lib").Transaction | null>;
+    getTransactionReceipt(hash: string): Promise<BtcTransactionReceipt | null>;
     /**
      * Quotes the costs of a transfer operation.
      *
@@ -92,6 +92,7 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
 }
 export type TransactionResult = import("@wdk/wallet").TransactionResult;
 export type TransferOptions = import("@wdk/wallet").TransferOptions;
+export type BtcTransactionReceipt = import("bitcoinjs-lib").Transaction;
 export type BtcTransaction = {
     /**
      * - The transaction's recipient.

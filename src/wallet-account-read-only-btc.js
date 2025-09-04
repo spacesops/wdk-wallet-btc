@@ -25,6 +25,8 @@ import ElectrumClient from './electrum-client.js'
 /** @typedef {import('@wdk/wallet').TransactionResult} TransactionResult */
 /** @typedef {import('@wdk/wallet').TransferOptions} TransferOptions */
 
+/** @typedef {import('bitcoinjs-lib').Transaction} BtcTransactionReceipt */
+
 /**
  * @typedef {Object} BtcTransaction
  * @property {string} to - The transaction's recipient.
@@ -97,7 +99,7 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
      * @protected
      * @type {import('bitcoinjs-lib').Network}
      */
-    this._network = networks[this._config.network || 'bitcoin']
+    this._network = networks[this._config.network] || networks.bitcoin
   }
 
   /**
@@ -112,10 +114,10 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
   }
 
   /**
-   * Returns a transaction's receipt if it is confirmed in a block.
+   * Returns a transaction's receipt.
    *
    * @param {string} hash - The transaction's hash.
-   * @returns {Promise<import('bitcoinjs-lib').Transaction | null>} - The receipt, or null if not yet included in a block.
+   * @returns {Promise<BtcTransactionReceipt | null>} – The receipt, or null if the transaction has not been included in a block yet.
    */
   async getTransactionReceipt (hash) {
     if (!/^[0-9a-fA-F]{64}$/.test(hash)) {

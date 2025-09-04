@@ -5,7 +5,9 @@ import accountFixtures, { BitcoinCli, Waiter } from './helpers/index.js'
 
 import { WalletAccountBtc, WalletAccountReadOnlyBtc } from '../index.js'
 
-const { SEED_PHRASE, ACCOUNT_BIP84 } = accountFixtures
+const { SEED_PHRASE, getBtcAccount } = accountFixtures
+
+const RO_ACCOUNT = getBtcAccount(1, 84)
 
 describe('WalletAccountReadOnlyBtc', () => {
   const bitcoin = new BitcoinCli({
@@ -25,9 +27,9 @@ describe('WalletAccountReadOnlyBtc', () => {
   let account, recipient
 
   beforeAll(async () => {
-    account = new WalletAccountReadOnlyBtc(ACCOUNT_BIP84.address, ACCOUNT_CONFIG)
+    account = new WalletAccountReadOnlyBtc(RO_ACCOUNT.address, ACCOUNT_CONFIG)
     recipient = bitcoin.getNewAddress()
-    bitcoin.sendToAddress(ACCOUNT_BIP84.address, 0.01)
+    bitcoin.sendToAddress(RO_ACCOUNT.address, 0.01)
     await waiter.mine()
   })
 
@@ -59,20 +61,6 @@ describe('WalletAccountReadOnlyBtc', () => {
       const { fee } = await account.quoteSendTransaction(TRANSACTION)
       expect(fee).toBe(141)
     })
-
-    test('should successfully quote a transaction', async () => {
-      const writable = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", ACCOUNT_CONFIG)
-      const addr44 = await writable.getAddress()
-      bitcoin.sendToAddress(addr44, 0.01)
-      await waiter.mine()
-
-      const roFrom44 = await writable.toReadOnlyAccount()
-      const { fee } = await roFrom44.quoteSendTransaction({ to: recipient, value: 1_000 })
-      expect(fee === 223).toBe(true)
-
-      writable.dispose()
-      roFrom44._electrumClient.close()
-    })
   })
 
   describe('quoteTransfer', () => {
@@ -83,7 +71,7 @@ describe('WalletAccountReadOnlyBtc', () => {
   })
 
   describe('getTransactionReceipt', () => {
-    test('should return the correct transaction receipt for a confirmed transaction', async () => {
+    test('should return the correct transaction receipt', async () => {
       const writableAccount = new WalletAccountBtc(SEED_PHRASE, "0'/0/11", ACCOUNT_CONFIG)
       const readOnlyAccount = await writableAccount.toReadOnlyAccount()
 

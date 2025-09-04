@@ -71,7 +71,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
   /**
    * Creates a new bitcoin wallet account.
    *
-   * @param {string | Uint8Array} seed - The wallet's BIP-39 seed phrase.
+   * @param {string | Uint8Array} seed - The wallet's [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki) seed phrase.
    * @param {string} path - The derivation path suffix (e.g. "0'/0/0").
    * @param {BtcWalletConfig} [config] - The configuration object.
    */
@@ -133,8 +133,6 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
      * @type {import('bip32').BIP32Interface}
      */
     this._account = account
-
-    this._network = net
   }
 
   /** @type {number} */
