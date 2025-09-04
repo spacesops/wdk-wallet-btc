@@ -1,4 +1,3 @@
-// wallet-account-read-only-btc.js
 // Copyright 2024 Tether Operations Limited
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +15,10 @@
 'use strict'
 
 import { WalletAccountReadOnly } from '@wdk/wallet'
-import { payments, Psbt, address as btcAddress } from 'bitcoinjs-lib'
+import { address as btcAddress } from 'bitcoinjs-lib'
+import { coinselect } from '@bitcoinerlab/coinselect'
+import { DescriptorsFactory } from '@bitcoinerlab/descriptors'
+import * as ecc from '@bitcoinerlab/secp256k1'
 
 import ElectrumClient from './electrum-client.js'
 
@@ -29,13 +31,10 @@ import ElectrumClient from './electrum-client.js'
  * @property {number} value - The amount of bitcoins to send to the recipient (in satoshis).
  */
 
-/** @typedef {import('bitcoinjs-lib').Transaction} BtcTransactionReceipt */
-
 /**
  * @typedef {Object} BtcWalletConfig
  * @property {string} [host] - The electrum server's hostname (default: "electrum.blockstream.info").
  * @property {number} [port] - The electrum server's port (default: 50001).
- * @property {44 | 84} [bip] - The BIP address type. Available values: 44 or 84 (default: 44).
  * @property {"bitcoin" | "regtest" | "testnet"} [network] The name of the network to use (default: "bitcoin").
  */
 
@@ -51,7 +50,10 @@ import ElectrumClient from './electrum-client.js'
  * @property {string} [recipient] - The receiving address for outgoing transfers.
  */
 
-const DUST_LIMIT = 546
+const { Output } = DescriptorsFactory(ecc)
+
+export const DUST_LIMIT = 546
+const MIN_TX_FEE_SATS = 141
 
 export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
   /**
@@ -92,10 +94,10 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
   }
 
   /**
-   * Returns a transaction's receipt.
+   * Returns a transaction's receipt if it is confirmed in a block.
    *
    * @param {string} hash - The transaction's hash.
-   * @returns {Promise<BtcTransactionReceipt | null>} - The receipt, or null if the transaction has not been included in a block yet.
+   * @returns {Promise<import('bitcoinjs-lib').Transaction | null>} - The receipt, or null if not yet included in a block.
    */
   async getTransactionReceipt (hash) {
     if (!/^[0-9a-fA-F]{64}$/.test(hash)) {
@@ -129,8 +131,11 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
    * @returns {Promise<Omit<TransactionResult, 'hash'>>} The transaction's quotes.
    */
   async quoteSendTransaction ({ to, value }) {
-    const address = await this.getAddress()
-    const fee = await this._estimateFee({ fromAddress: address, to, value })
+    const from = await this.getAddress()
+    let feeRate = await this._electrumClient.getFeeEstimateInSatsPerVb()
+    feeRate = Math.max(Number(feeRate), 1)
+
+    const { fee } = await this._planSpend({ fromAddress: from, toAddress: to, amount: value, feeRate })
     return { fee }
   }
 
@@ -155,46 +160,19 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
    */
   async getTransfers (options = {}) {
     const { direction = 'all', limit = 10, skip = 0 } = options
+
     const address = await this.getAddress()
+    const net = this._electrumClient.network
     const history = await this._electrumClient.getHistory(address)
 
-    const isAddressMatch = (scriptPubKey, addr) => {
-      if (!scriptPubKey) return false
-      if (scriptPubKey.address) return scriptPubKey.address === addr
-      if (Array.isArray(scriptPubKey.addresses)) return scriptPubKey.addresses.includes(addr)
-      return false
-    }
+    const myScript = btcAddress.toOutputScript(address, net)
 
-    const extractAddress = (scriptPubKey) => {
-      if (!scriptPubKey) return null
-      if (scriptPubKey.address) return scriptPubKey.address
-      if (Array.isArray(scriptPubKey.addresses)) return scriptPubKey.addresses[0]
-      return null
-    }
-
-    const getInputValue = async (ins) => {
-      let total = 0
-      for (const input of ins) {
-        try {
-          const prevId = Buffer.from(input.hash).reverse().toString('hex')
-          const prevTx = await this._electrumClient.getTransaction(prevId)
-          total += prevTx.outs[input.index].value
-        } catch (_) {}
-      }
-      return total
-    }
-
-    const isOutgoingTx = async (ins) => {
-      for (const input of ins) {
-        try {
-          const prevId = Buffer.from(input.hash).reverse().toString('hex')
-          const prevTx = await this._electrumClient.getTransaction(prevId)
-          const script = prevTx.outs[input.index].script
-          const addr = this._getAddressFromScript(script)
-          if (isAddressMatch({ address: addr }, address)) return true
-        } catch (_) {}
-      }
-      return false
+    const txCache = new Map()
+    const getTx = async (txid) => {
+      if (txCache.has(txid)) return txCache.get(txid)
+      const tx = await this._electrumClient.getTransaction(txid)
+      txCache.set(txid, tx)
+      return tx
     }
 
     const transfers = []
@@ -202,35 +180,62 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     for (const item of history.slice(skip)) {
       if (transfers.length >= limit) break
 
-      const tx = await this._electrumClient.getTransaction(item.tx_hash)
+      let tx
+      try {
+        tx = await getTx(item.tx_hash)
+      } catch (_) { continue }
 
-      const totalInput = await getInputValue(tx.ins)
+      let totalInput = 0
+      let isOutgoing = false
+
+      const prevOuts = await Promise.all(
+        tx.ins.map(async (input) => {
+          try {
+            const prevId = Buffer.from(input.hash).reverse().toString('hex')
+            const prevTx = await getTx(prevId)
+            const prevOut = prevTx.outs[input.index]
+            return prevOut || null
+          } catch (_) {
+            return null
+          }
+        })
+      )
+
+      for (const prevOut of prevOuts) {
+        if (!prevOut) continue
+        totalInput += prevOut.value
+        if (!isOutgoing && Buffer.compare(prevOut.script, myScript) === 0) {
+          isOutgoing = true
+        }
+      }
+
       const totalOutput = tx.outs.reduce((sum, o) => sum + o.value, 0)
-      const fee = totalInput > 0 ? +(totalInput - totalOutput).toFixed(8) : null
-      const outgoing = await isOutgoingTx(tx.ins)
+      const fee = totalInput > 0 ? (totalInput - totalOutput) : null
 
-      for (const [index, out] of tx.outs.entries()) {
-        const hex = out.script.toString('hex')
-        const addr = this._getAddressFromScript(out.script)
-        const spk = { hex, address: addr }
-        const recipient = extractAddress(spk)
-        const isToSelf = isAddressMatch(spk, address)
+      for (let vout = 0; vout < tx.outs.length; vout++) {
+        const out = tx.outs[vout]
+        const toSelf = Buffer.compare(out.script, myScript) === 0
 
         let directionType = null
-        if (isToSelf && !outgoing) directionType = 'incoming'
-        else if (!isToSelf && outgoing) directionType = 'outgoing'
-        else if (isToSelf && outgoing) directionType = 'change'
+        if (toSelf && !isOutgoing) directionType = 'incoming'
+        else if (!toSelf && isOutgoing) directionType = 'outgoing'
+        else if (toSelf && isOutgoing) directionType = 'change'
         else continue
 
         if (directionType === 'change') continue
         if (direction !== 'all' && direction !== directionType) continue
         if (transfers.length >= limit) break
 
+        let recipient = null
+        try {
+          recipient = btcAddress.fromOutputScript(out.script, net)
+        } catch (_) {}
+
         transfers.push({
           txid: item.tx_hash,
           height: item.height,
           value: out.value,
-          vout: index,
+          vout,
           direction: directionType,
           recipient,
           fee,
@@ -243,120 +248,71 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
   }
 
   /**
-   * Estimates the fee for a transaction (supports P2PKH and P2WPKH).
+   * Build a fee-aware funding plan.
+   *
+   * Uses `descriptors` + `coinselect` to choose inputs, at a given feeRate (sats/vB). Returns the selected UTXOs (in the shape expected by the PSBT builder), the computed fee, and the resulting change value.
    *
    * @protected
-   * @param {{ fromAddress: string, to: string, value: number }} params
-   * @returns {Promise<number>}
+   * @param {Object} params
+   * @param {string} params.fromAddress - The sender's address.
+   * @param {string} params.toAddress - The recipient's address.
+   * @param {number} params.amount - Amount to send in sats.
+   * @param {number} params.feeRate - Fee rate in sats/vB.
+   * @returns {Promise<{ utxos: Array<any>, fee: number, changeValue: number }>}
+   * utxos: [{ tx_hash, tx_pos, value, vout: { value, scriptPubKey: { hex } } }, ...]
+   * fee: total fee in sats chosen by coinselect
+   * changeValue: total inputs - amount - fee (sats)
    */
-  async _estimateFee ({ fromAddress, to, value }) {
-    let feeRate = await this._electrumClient.getFeeEstimateInSatsPerVb()
-    feeRate = Math.max(Number(feeRate), 1)
+  async _planSpend ({ fromAddress, toAddress, amount, feeRate }) {
+    if (amount <= DUST_LIMIT) {
+      throw new Error(`The amount must be bigger than the dust limit (= ${DUST_LIMIT}).`)
+    }
 
-    const utxos = await this._electrumClient.getUnspent(fromAddress)
-    if (!utxos || utxos.length === 0) {
+    const net = this._electrumClient.network
+
+    const ownScriptHex = btcAddress.toOutputScript(fromAddress, net).toString('hex')
+
+    const ownOutput = new Output({ descriptor: `addr(${fromAddress})`, network: net })
+    const toOutput = new Output({ descriptor: `addr(${toAddress})`, network: net })
+
+    const unspent = await this._electrumClient.getUnspent(fromAddress)
+    if (!unspent || unspent.length === 0) {
       throw new Error('No unspent outputs available.')
     }
 
-    const net = this._electrumClient.network
-    const fromScript = btcAddress.toOutputScript(fromAddress, net)
-    const toScript = btcAddress.toOutputScript(to, net)
+    const utxosForSelect = unspent.map(u => ({ output: ownOutput, value: u.value, __ref: u }))
+    const satsPerVb = Math.max(Number(feeRate) || 0, 1)
 
-    const senderIsSegWit = this._isSegWitOutput(fromScript)
+    const result = coinselect({
+      utxos: utxosForSelect,
+      targets: [{ output: toOutput, value: amount }],
+      remainder: ownOutput,
+      feeRate: satsPerVb
+    })
 
-    const selected = []
-    let total = 0
-    let fee = 0
-
-    const dummySig = Buffer.alloc(71, 1)
-    const dummyPub = Buffer.alloc(33, 2)
-    const finalWitness = this._serializeWitness([dummySig, dummyPub])
-
-    const P2PKH_INPUT_VB = 148
-    const OUTPUT_VB = 34
-    const BASE_VB = 10
-
-    for (const u of utxos) {
-      selected.push(u)
-      total += u.value
-
-      if (senderIsSegWit) {
-        const psbt = new Psbt({ network: net })
-        for (const s of selected) {
-          psbt.addInput({
-            hash: s.tx_hash,
-            index: s.tx_pos,
-            witnessUtxo: { script: fromScript, value: s.value }
-          })
-        }
-        psbt.addOutput({ script: toScript, value })
-
-        const provisionalChange = total - value
-        if (provisionalChange > DUST_LIMIT) {
-          psbt.addOutput({ script: fromScript, value: provisionalChange })
-        }
-
-        for (let i = 0; i < selected.length; i++) {
-          psbt.updateInput(i, { finalScriptWitness: finalWitness })
-        }
-
-        const vsize = psbt.extractTransaction().virtualSize()
-        fee = Math.max(Math.ceil(vsize * feeRate), 141)
-      } else {
-        let outputsCount = 1
-        const change = total - value
-        if (change > DUST_LIMIT) outputsCount += 1
-
-        const inVb = selected.length * P2PKH_INPUT_VB
-        const outVb = outputsCount * OUTPUT_VB
-        const vsize = BASE_VB + inVb + outVb
-        fee = Math.max(Math.ceil(vsize * feeRate), 141)
-      }
-
-      if (total >= value + fee) break
-    }
-
-    if (total < value + fee) {
+    if (!result) {
       throw new Error('Insufficient balance to send the transaction.')
     }
 
-    return fee
-  }
+    let fee = Number.isFinite(result.fee) && result.fee > 0 ? result.fee : MIN_TX_FEE_SATS
+    fee = Math.max(fee, MIN_TX_FEE_SATS)
 
-  /** @private */
-  _encodeVarInt (n) {
-    if (n < 0xfd) return Buffer.from([n])
-    if (n <= 0xffff) {
-      const b = Buffer.alloc(3); b[0] = 0xfd; b.writeUInt16LE(n, 1); return b
+    const utxos = result.utxos.map(u => {
+      const base = u.__ref
+      return {
+        ...base,
+        vout: { value: base.value, scriptPubKey: { hex: ownScriptHex } }
+      }
+    })
+
+    const totalIn = utxos.reduce((s, u) => s + u.value, 0)
+
+    let changeValue = totalIn - amount - fee
+    if (changeValue < 0) throw new Error('Insufficient balance after fees.')
+    if (changeValue <= DUST_LIMIT) {
+      fee += Math.max(changeValue, 0)
+      changeValue = 0
     }
-    const b = Buffer.alloc(5); b[0] = 0xfe; b.writeUInt32LE(n, 1); return b
-  }
-
-  /** @private */
-  _serializeWitness (items) {
-    const parts = [this._encodeVarInt(items.length)]
-    for (const it of items) {
-      parts.push(this._encodeVarInt(it.length), it)
-    }
-    return Buffer.concat(parts)
-  }
-
-  /** @private */
-  _isSegWitOutput (script) {
-    const scriptHex = script.toString('hex')
-    return (scriptHex.length === 44 && scriptHex.startsWith('0014')) ||
-           (scriptHex.length === 68 && scriptHex.startsWith('0020'))
-  }
-
-  /** @private */
-  _getAddressFromScript (script) {
-    const net = this._electrumClient.network
-    let addr
-    if (this._isSegWitOutput(script)) {
-      addr = payments.p2wpkh({ output: script, network: net }).address
-    } else {
-      addr = payments.p2pkh({ output: script, network: net }).address
-    }
-    return addr
+    return { utxos, fee, changeValue }
   }
 }

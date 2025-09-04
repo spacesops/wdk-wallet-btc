@@ -18,10 +18,9 @@ export default class ElectrumClient {
     getUnspent(address: any): Promise<any>;
     getTransaction(txid: any): Promise<Transaction>;
     broadcastTransaction(txHex: any): Promise<any>;
-    getFeeEstimateInSatsPerVb(blocks?: number): Promise<BigNumber>;
+    getFeeEstimateInSatsPerVb(blocks?: number): Promise<number>;
     getScriptHash(address: any): string;
     getBalance(address: any): Promise<any>;
     isConnected(): boolean;
 }
 import { Transaction } from 'bitcoinjs-lib';
-import BigNumber from 'bignumber.js';

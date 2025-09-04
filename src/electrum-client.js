@@ -16,7 +16,6 @@
 import { connect as _netConnect } from 'net'
 import { connect as __tlsConnect } from 'tls'
 import { networks, address as _address, crypto, Transaction } from 'bitcoinjs-lib'
-import BigNumber from 'bignumber.js'
 
 /** @internal */
 export default class ElectrumClient {
@@ -242,7 +241,7 @@ export default class ElectrumClient {
 
   async getFeeEstimateInSatsPerVb (blocks = 1) {
     const feeBtcPerKb = await this._request('blockchain.estimatefee', [blocks])
-    return new BigNumber(feeBtcPerKb).multipliedBy(100_000).integerValue(BigNumber.ROUND_CEIL)
+    return Math.ceil(Number(feeBtcPerKb) * 100_000)
   }
 
   getScriptHash (address) {

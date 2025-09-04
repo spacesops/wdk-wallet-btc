@@ -1,3 +1,4 @@
+export const DUST_LIMIT: 546;
 export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     /**
      * Creates a new bitcoin read-only wallet account.
@@ -21,12 +22,12 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
      */
     protected _electrumClient: ElectrumClient;
     /**
-     * Returns a transaction's receipt.
+     * Returns a transaction's receipt if it is confirmed in a block.
      *
      * @param {string} hash - The transaction's hash.
-     * @returns {Promise<BtcTransactionReceipt | null>} - The receipt, or null if the transaction has not been included in a block yet.
+     * @returns {Promise<import('bitcoinjs-lib').Transaction | null>} - The receipt, or null if not yet included in a block.
      */
-    getTransactionReceipt(hash: string): Promise<BtcTransactionReceipt | null>;
+    getTransactionReceipt(hash: string): Promise<import("bitcoinjs-lib").Transaction | null>;
     /**
      * Quotes the costs of a transfer operation.
      *
@@ -49,25 +50,31 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
         skip?: number;
     }): Promise<BtcTransfer[]>;
     /**
-     * Estimates the fee for a transaction (supports P2PKH and P2WPKH).
+     * Build a fee-aware funding plan.
+     *
+     * Uses `descriptors` + `coinselect` to choose inputs, at a given feeRate (sats/vB). Returns the selected UTXOs (in the shape expected by the PSBT builder), the computed fee, and the resulting change value.
      *
      * @protected
-     * @param {{ fromAddress: string, to: string, value: number }} params
-     * @returns {Promise<number>}
+     * @param {Object} params
+     * @param {string} params.fromAddress - The sender's address.
+     * @param {string} params.toAddress - The recipient's address.
+     * @param {number} params.amount - Amount to send in sats.
+     * @param {number} params.feeRate - Fee rate in sats/vB.
+     * @returns {Promise<{ utxos: Array<any>, fee: number, changeValue: number }>}
+     * utxos: [{ tx_hash, tx_pos, value, vout: { value, scriptPubKey: { hex } } }, ...]
+     * fee: total fee in sats chosen by coinselect
+     * changeValue: total inputs - amount - fee (sats)
      */
-    protected _estimateFee({ fromAddress, to, value }: {
+    protected _planSpend({ fromAddress, toAddress, amount, feeRate }: {
         fromAddress: string;
-        to: string;
-        value: number;
-    }): Promise<number>;
-    /** @private */
-    private _encodeVarInt;
-    /** @private */
-    private _serializeWitness;
-    /** @private */
-    private _isSegWitOutput;
-    /** @private */
-    private _getAddressFromScript;
+        toAddress: string;
+        amount: number;
+        feeRate: number;
+    }): Promise<{
+        utxos: Array<any>;
+        fee: number;
+        changeValue: number;
+    }>;
 }
 export type TransactionResult = import("@wdk/wallet").TransactionResult;
 export type TransferOptions = import("@wdk/wallet").TransferOptions;
@@ -81,7 +88,6 @@ export type BtcTransaction = {
      */
     value: number;
 };
-export type BtcTransactionReceipt = import("bitcoinjs-lib").Transaction;
 export type BtcWalletConfig = {
     /**
      * - The electrum server's hostname (default: "electrum.blockstream.info").
@@ -91,10 +97,6 @@ export type BtcWalletConfig = {
      * - The electrum server's port (default: 50001).
      */
     port?: number;
-    /**
-     * - The BIP address type. Available values: 44 or 84 (default: 44).
-     */
-    bip?: 44 | 84;
     /**
      * The name of the network to use (default: "bitcoin").
      */

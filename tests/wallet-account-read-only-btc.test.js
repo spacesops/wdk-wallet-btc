@@ -68,7 +68,7 @@ describe('WalletAccountReadOnlyBtc', () => {
 
       const roFrom44 = await writable.toReadOnlyAccount()
       const { fee } = await roFrom44.quoteSendTransaction({ to: recipient, value: 1_000 })
-      expect(fee === 226).toBe(true)
+      expect(fee === 223).toBe(true)
 
       writable.dispose()
       await roFrom44._electrumClient.disconnect()

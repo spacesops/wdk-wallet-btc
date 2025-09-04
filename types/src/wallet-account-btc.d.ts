@@ -3,7 +3,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
     /**
      * Creates a new bitcoin wallet account.
      *
-     * @param {string | Uint8Array} seed - The wallet's [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki) seed phrase.
+     * @param {string | Uint8Array} seed - The wallet's BIP-39 seed phrase.
      * @param {string} path - The derivation path suffix (e.g. "0'/0/0").
      * @param {BtcWalletConfig} [config] - The configuration object.
      */
@@ -15,6 +15,12 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      * @type {string}
      */
     protected _path: string;
+    /**
+     * Track BIP for input model decisions.
+     * @protected
+     * @type {44|84}
+     */
+    protected _bip: 44 | 84;
     /**
      * The BIP32 master node.
      *
@@ -32,7 +38,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
     /** @type {number} */
     get index(): number;
     /**
-     * The derivation path of this account (BIP-44/84 depending on config).
+     * The derivation path of this account.
      *
      * @type {string}
      */
@@ -78,7 +84,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      */
     toReadOnlyAccount(): Promise<WalletAccountReadOnlyBtc>;
     /**
-     * Disposes the wallet account, erasing the private key from the memory and closing the connection with the electrum server.
+     * Disposes the wallet account, erasing the private key from memory and closing the connection with the electrum server.
      */
     dispose(): void;
     /**
@@ -86,7 +92,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      *
      * @protected
      * @param {{ recipient: string, amount: number }} params
-     * @returns {Promise<{ txid: string, hex: string, fee: BigNumber }>}
+     * @returns {Promise<{ txid: string, hex: string, fee: number }>}
      */
     protected _getTransaction({ recipient, amount }: {
         recipient: string;
@@ -94,31 +100,26 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
     }): Promise<{
         txid: string;
         hex: string;
-        fee: BigNumber;
+        fee: number;
     }>;
     /**
-     * Collects enough UTXOs to cover `amount`.
-     *
-     * @protected
-     * @param {number} amount
-     * @param {string} address
-     * @returns {Promise<Array<any>>}
-     */
-    protected _getUtxos(amount: number, address: string): Promise<Array<any>>;
-    /**
-     * Creates and signs the PSBT, estimating fees, and returns the final tx.
+     * Build and sign a PSBT from the spend plan. If real vsize requires a higher fee, do one clean rebalance.
+     * Supports both SegWit (BIP84) and legacy P2PKH (BIP44) inputs.
      *
      * @protected
      * @param {Array<any>} utxoSet
-     * @param {number} amount
-     * @param {string} recipient
-     * @param {BigNumber} feeRate - sats/vB
-     * @returns {Promise<{ txid: string, hex: string, fee: BigNumber }>}
+     * @param {string} recipientAddress
+     * @param {number} recipientAmnt
+     * @param {number} changeValue
+     * @param {number} plannedFee
+     * @param {number} feeRate
+     * @returns {Promise<{ txid: string, hex: string, fee: number, vsize: number }>}
      */
-    protected _getRawTransaction(utxoSet: Array<any>, amount: number, recipient: string, feeRate: BigNumber): Promise<{
+    protected _getRawTransaction(utxoSet: Array<any>, recipientAddress: string, recipientAmnt: number, changeValue: number, plannedFee: number, feeRate: number): Promise<{
         txid: string;
         hex: string;
-        fee: BigNumber;
+        fee: number;
+        vsize: number;
     }>;
 }
 export type IWalletAccount = import("@wdk/wallet").IWalletAccount;
@@ -129,4 +130,3 @@ export type TransferResult = import("@wdk/wallet").TransferResult;
 export type BtcTransaction = import("./wallet-account-read-only-btc.js").BtcTransaction;
 export type BtcWalletConfig = import("./wallet-account-read-only-btc.js").BtcWalletConfig;
 import WalletAccountReadOnlyBtc from './wallet-account-read-only-btc.js';
-import BigNumber from 'bignumber.js';
