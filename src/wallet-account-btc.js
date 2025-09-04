@@ -92,7 +92,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
     const { masterNode, account } = derivePath(seed, fullPath)
 
     if (typeof seed === 'string') {
-      sodium_memzero(seed)
+      try { sodium_memzero(seed) } catch (_) {}
     }
 
     const net = networks[config.network] || networks.bitcoin
@@ -223,7 +223,6 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
    * Disposes the wallet account, erasing the private key from memory and closing the connection with the electrum server.
    */
   dispose () {
-    // Zero out derived node material (memory hygiene)
     try { sodium_memzero(this._account.privateKey) } catch (_) {}
     try { sodium_memzero(this._account.chainCode) } catch (_) {}
 
@@ -262,7 +261,6 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
 
   /**
    * Build and sign a PSBT from the spend plan. If real vsize requires a higher fee, do one clean rebalance.
-   * Supports both SegWit (BIP84) and legacy P2PKH (BIP44) inputs.
    *
    * @protected
    * @param {Array<any>} utxoSet

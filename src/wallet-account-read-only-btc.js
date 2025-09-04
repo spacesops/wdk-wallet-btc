@@ -35,8 +35,10 @@ import ElectrumClient from './electrum-client.js'
  * @typedef {Object} BtcWalletConfig
  * @property {string} [host] - The electrum server's hostname (default: "electrum.blockstream.info").
  * @property {number} [port] - The electrum server's port (default: 50001).
+ * @property {44 | 84} [bip] - The BIP address type. Available values: 44 or 84 (default: 44).
  * @property {"bitcoin" | "regtest" | "testnet"} [network] The name of the network to use (default: "bitcoin").
- */
+ * @property {"tcp" | "tls" | "ssl"} [protocol] - The connection protocol to use (default: "tcp").
+*/
 
 /**
  * @typedef {Object} BtcTransfer
@@ -104,8 +106,7 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
    * @returns {Promise<number>} The bitcoin balance (in satoshis).
    */
   async getBalance () {
-    const address = await this.getAddress()
-    const { confirmed } = await this._electrumClient.blockchainScripthash_getBalance(this._getScriptHash(address))
+    const { confirmed } = await this._electrumClient.blockchainScripthash_getBalance(this._getScriptHash())
     return +confirmed
   }
 
@@ -120,8 +121,7 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
       throw new Error("The 'getTransactionReceipt(hash)' method requires a valid transaction hash to fetch the receipt.")
     }
 
-    const address = await this.getAddress()
-    const history = await this._electrumClient.blockchainScripthash_getHistory(this._getScriptHash(address))
+    const history = await this._electrumClient.blockchainScripthash_getHistory(this._getScriptHash())
     const item = Array.isArray(history) ? history.find(h => h && h.tx_hash === hash) : null
 
     if (!item) return null
@@ -178,10 +178,10 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
   async getTransfers (options = {}) {
     const { direction = 'all', limit = 10, skip = 0 } = options
 
-    const address = await this.getAddress()
     const net = this._network
-    const history = await this._electrumClient.blockchainScripthash_getHistory(this._getScriptHash(address))
+    const history = await this._electrumClient.blockchainScripthash_getHistory(this._getScriptHash())
 
+    const address = this.getAddress()
     const myScript = btcAddress.toOutputScript(address, net)
 
     const txCache = new Map()
@@ -198,9 +198,7 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
       if (transfers.length >= limit) break
 
       let tx
-      try {
-        tx = await getTx(item.tx_hash)
-      } catch (_) { continue }
+      try { tx = await getTx(item.tx_hash) } catch (_) { continue }
 
       let totalInput = 0
       let isOutgoing = false
@@ -244,9 +242,7 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
         if (transfers.length >= limit) break
 
         let recipient = null
-        try {
-          recipient = btcAddress.fromOutputScript(out.script, net)
-        } catch (_) {}
+        try { recipient = btcAddress.fromOutputScript(out.script, net) } catch (_) {}
 
         transfers.push({
           txid: item.tx_hash,
@@ -333,7 +329,15 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     return { utxos, fee, changeValue }
   }
 
-  _getScriptHash (address) {
+  /**
+ * Computes the SHA-256 hash of the output script for this wallet's address,
+ * reverses the byte order, and returns it as a hex string.
+ *
+ * @private
+ * @returns {string} The reversed SHA-256 script hash as a hex-encoded string.
+ */
+  _getScriptHash () {
+    const address = this.getAddress()
     const script = btcAddress.toOutputScript(address, this._network)
     const hash = btcCrypto.sha256(script)
     return Buffer.from(hash).reverse().toString('hex')
