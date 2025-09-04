@@ -2,7 +2,7 @@ import net from 'net'
 
 import zmq from 'zeromq'
 
-const TIMEOUT = 3_000
+const TIMEOUT = 20_000
 
 const POLLING_INTERVAL = 50
 
