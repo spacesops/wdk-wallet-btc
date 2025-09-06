@@ -1,135 +1,94 @@
 /**
- * @typedef {Object} ElectrumIdentity
- * @property {string} [client='wdk-wallet'] - Client name reported to the server.
- * @property {string} [version='1.4'] - Electrum protocol version.
+ * @typedef {Object} ElectrumConfig
+ * @property {string} [client] - The name of the client reported to the server (default: 'wdk-wallet').
+ * @property {string} [version] - The electrum protocol version (default: '1.4').
  */
 /**
- * @typedef {Object} ElectrumPersistence
- * @property {number} [retryPeriod=1000] - ms between reconnect attempts.
- * @property {number} [maxRetry=2] - max reconnect attempts before failing.
- * @property {number} [pingPeriod=120000] - ms between keepalive pings.
- * @property {(err: Error | null) => void | null} [callback=null] - optional status callback.
+ * @typedef {Object} PersistencePolicy
+ * @property {number} [maxRetry] - The maximum reconnection attempts before failing (default: 2).
+ * @property {number} [retryPeriod] - The delay between reconnect attempts, in ms (default: 1_000).
+ * @property {number} [pingPeriod] - The delay between keep-alive pings, in ms (default: 100_000).
+ * @property {(err: Error | null) => void} [callback] - An optional status callback.
  */
 /**
- * @typedef {Object} ElectrumCtorExtras
- * @property {ElectrumIdentity} [identity] - (unused; provided via top-level args)
- * @property {ElectrumPersistence} [persistence] - Persistence policy.
- * @property {any} [options] - Socket options consumed by base client.
- * @property {any} [callbacks] - Event callbacks consumed by base client.
- */
-/**
- * A thin wrapper around {@link @mempool/electrum-client} that lazily initializes the underlying Electrum connection on first RPC call.
+ * A thin wrapper around {@link @mempool/electrum-client} that lazily initializes the underlying
+ * electrum connection on first rpc call.
  *
- * The instance returned from the constructor is a Proxy that intercepts all method calls
- * (except `close`, `initElectrum`, and `reconnect`) to ensure the client is initialized
- * by awaiting {@link ElectrumClient#_ensure}.
- *
- * @example
- * const ec = new ElectrumClient(50001, 'electrum.blockstream.info', 'tcp')
- * const feeRate = await ec.blockchainEstimatefee(1) // initialization is performed automatically
- *
- * @extends BaseElectrumClient
+ * The instance returned from the constructor is a proxy that intercepts all method calls
+ * except `close`, `initElectrum`, and `reconnect` and ensures the client is initialized.
  */
 export default class ElectrumClient {
     /**
-     * Create a new Electrum client wrapper.
+     * Create a new electrum client wrapper.
      *
-     * @param {number} port - Electrum server port (e.g. `50001`, `50002`).
-     * @param {string} host - Electrum server hostname.
-     * @param {'tcp' | 'tls' | 'ssl'} protocol - Transport protocol.
-     * @param {Object} [opts={}] - Optional configuration.
-     * @param {string} [opts.client='wdk-wallet'] - Client name reported to the server.
-     * @param {string} [opts.version='1.4'] - Electrum protocol version.
-     * @param {ElectrumPersistence} [opts.persistence] - Reconnect & keepalive behavior.
-     * @param {any} [opts.options] - Low-level socket options for base client.
-     * @param {any} [opts.callbacks] - Low-level callbacks for base client.
-     *
-     * @returns {ElectrumClient} A proxied instance that auto-initializes on first RPC.
+     * @param {number} port - The electrum server's port.
+     * @param {string} host - The electrum server's hostname.
+     * @param {'tcp' | 'tls' | 'ssl'} protocol - The transport protocol to use.
+     * @param {PersistencePolicy} [persistencePolicy] - The persistence policy.
      */
-    constructor(port: number, host: string, protocol: "tcp" | "tls" | "ssl", { client, version, persistence, options, callbacks }?: {
-        client?: string;
-        version?: string;
-        persistence?: ElectrumPersistence;
-        options?: any;
-        callbacks?: any;
-    });
-    /** @private @type {ElectrumIdentity} */
-    private _clientInfo;
-    /** @private @type {ElectrumPersistence} */
-    private _persistence;
+    constructor(port: number, host: string, protocol: "tcp" | "tls" | "ssl", persistencePolicy?: PersistencePolicy);
     /**
-     * Promise representing an in-flight or completed initialization.
-     * Reset to `null` on failure/close, re-created on next demand.
+     * @private
+     * @type {ElectrumConfig}
+     **/
+    private _electrumConfig;
+    /**
+     * @private
+     * @type {PersistencePolicy}
+     **/
+    private _persistencePolicy;
+    /**
      * @private
      * @type {Promise<void> | null}
      */
     private _ready;
     /**
-     * Ensure the Electrum connection is initialized. If a previous attempt failed or the
+     * Ensures the electrum connection is initialized. If a previous attempt failed or the
      * client was closed, a new initialization is attempted.
-    *
+     *
      * @private
-     * @param {number} [timeoutMs=15000] - In ms.
-     * @returns {Promise<void>} Resolves when ready for RPC calls.
-     * @throws {Error} If hits a timeout or the init fails.
+     * @param {number} [timeout] - The timeout, in ms (default: 15_000).
+     * @returns {Promise<void>}
      */
     private _ensure;
     /**
-     * Recreate the underlying socket and reinitialize the session.
+     * Recreates the underlying socket and reinitializes the session.
      *
-     * @returns {Promise<void>} Resolves when reconnected and ready.
+     * @returns {Promise<void>}
      */
     reconnect(): Promise<void>;
     /**
-     * Close the connection and clear readiness state.
+     * Closes the connection.
      *
      * @returns {void}
      */
     close(): void;
 }
-export type ElectrumIdentity = {
+export type ElectrumConfig = {
     /**
-     * - Client name reported to the server.
+     * - The name of the client reported to the server (default: 'wdk-wallet').
      */
     client?: string;
     /**
-     * - Electrum protocol version.
+     * - The electrum protocol version (default: '1.4').
      */
     version?: string;
 };
-export type ElectrumPersistence = {
+export type PersistencePolicy = {
     /**
-     * - ms between reconnect attempts.
-     */
-    retryPeriod?: number;
-    /**
-     * - max reconnect attempts before failing.
+     * - The maximum reconnection attempts before failing (default: 2).
      */
     maxRetry?: number;
     /**
-     * - ms between keepalive pings.
+     * - The delay between reconnect attempts, in ms (default: 1_000).
+     */
+    retryPeriod?: number;
+    /**
+     * - The delay between keep-alive pings, in ms (default: 100_000).
      */
     pingPeriod?: number;
     /**
-     * - optional status callback.
+     * - An optional status callback.
      */
-    callback?: (err: Error | null) => void | null;
-};
-export type ElectrumCtorExtras = {
-    /**
-     * - (unused; provided via top-level args)
-     */
-    identity?: ElectrumIdentity;
-    /**
-     * - Persistence policy.
-     */
-    persistence?: ElectrumPersistence;
-    /**
-     * - Socket options consumed by base client.
-     */
-    options?: any;
-    /**
-     * - Event callbacks consumed by base client.
-     */
-    callbacks?: any;
+    callback?: (err: Error | null) => void;
 };

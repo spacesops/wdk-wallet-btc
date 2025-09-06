@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals'
 
 import WalletManagerBtc, { WalletAccountBtc } from '../index.js'
-import { SEED_PHRASE } from './helpers/account-fixtures.js'
+
+const SEED_PHRASE = 'cook voyage document eight skate token alien guide drink uncle term abuse'
 
 describe('WalletManagerBtc', () => {
   let wallet
@@ -67,8 +68,8 @@ describe('WalletManagerBtc', () => {
       expect(global.fetch).toHaveBeenCalledWith('https://mempool.space/api/v1/fees/recommended')
 
       expect(feeRates).toEqual({
-        normal: DUMMY_FEE_RATES.hourFee,
-        fast: DUMMY_FEE_RATES.fastestFee
+        normal: BigInt(DUMMY_FEE_RATES.hourFee),
+        fast: BigInt(DUMMY_FEE_RATES.fastestFee)
       })
     })
   })

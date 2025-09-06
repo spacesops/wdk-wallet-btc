@@ -8,34 +8,19 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      * @param {BtcWalletConfig} [config] - The configuration object.
      */
     constructor(seed: string | Uint8Array, path: string, config?: BtcWalletConfig);
+    /** @private */
+    private _path;
+    /** @private */
+    private _bip;
+    /** @private */
+    private _masterNode;
+    /** @private */
+    private _account;
     /**
-     * The derivation path of this account.
+     * The derivation path's index of this account.
      *
-     * @protected
-     * @type {string}
+     * @type {number}
      */
-    protected _path: string;
-    /**
-     * Track BIP for input model decisions.
-     * @protected
-     * @type {44|84}
-     */
-    protected _bip: 44 | 84;
-    /**
-     * The BIP32 master node.
-     *
-     * @protected
-     * @type {import('bip32').BIP32Interface}
-     */
-    protected _masterNode: import("bip32").BIP32Interface;
-    /**
-     * The derived BIP32 account.
-     *
-     * @protected
-     * @type {import('bip32').BIP32Interface}
-     */
-    protected _account: import("bip32").BIP32Interface;
-    /** @type {number} */
     get index(): number;
     /**
      * The derivation path of this account.
@@ -79,7 +64,22 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      */
     transfer(options: TransferOptions): Promise<TransferResult>;
     /**
+     * Returns the bitcoin transfers history of the account.
+     *
+     * @param {Object} [options] - The options.
+     * @param {"incoming" | "outgoing" | "all"} [options.direction] - If set, only returns transfers with the given direction (default: "all").
+     * @param {number} [options.limit] - The number of transfers to return (default: 10).
+     * @param {number} [options.skip] - The number of transfers to skip (default: 0).
+     * @returns {Promise<BtcTransfer[]>} The bitcoin transfers.
+     */
+    getTransfers(options?: {
+        direction?: "incoming" | "outgoing" | "all";
+        limit?: number;
+        skip?: number;
+    }): Promise<BtcTransfer[]>;
+    /**
      * Returns a read-only copy of the account.
+     *
      * @returns {Promise<WalletAccountReadOnlyBtc>} The read-only account.
      */
     toReadOnlyAccount(): Promise<WalletAccountReadOnlyBtc>;
@@ -87,39 +87,8 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      * Disposes the wallet account, erasing the private key from memory and closing the connection with the electrum server.
      */
     dispose(): void;
-    /**
-     * Build and fee-estimate a transaction for this account.
-     *
-     * @protected
-     * @param {{ recipient: string, amount: number }} params
-     * @returns {Promise<{ txid: string, hex: string, fee: number }>}
-     */
-    protected _getTransaction({ recipient, amount }: {
-        recipient: string;
-        amount: number;
-    }): Promise<{
-        txid: string;
-        hex: string;
-        fee: number;
-    }>;
-    /**
-     * Build and sign a PSBT from the spend plan. If real vsize requires a higher fee, do one clean rebalance.
-     *
-     * @protected
-     * @param {Array<any>} utxoSet
-     * @param {string} recipientAddress
-     * @param {number} recipientAmnt
-     * @param {number} changeValue
-     * @param {number} plannedFee
-     * @param {number} feeRate
-     * @returns {Promise<{ txid: string, hex: string, fee: number, vsize: number }>}
-     */
-    protected _getRawTransaction(utxoSet: Array<any>, recipientAddress: string, recipientAmnt: number, changeValue: number, plannedFee: number, feeRate: number): Promise<{
-        txid: string;
-        hex: string;
-        fee: number;
-        vsize: number;
-    }>;
+    /** @private */
+    private _getRawTransaction;
 }
 export type IWalletAccount = import("@wdk/wallet").IWalletAccount;
 export type KeyPair = import("@wdk/wallet").KeyPair;
@@ -128,4 +97,38 @@ export type TransferOptions = import("@wdk/wallet").TransferOptions;
 export type TransferResult = import("@wdk/wallet").TransferResult;
 export type BtcTransaction = import("./wallet-account-read-only-btc.js").BtcTransaction;
 export type BtcWalletConfig = import("./wallet-account-read-only-btc.js").BtcWalletConfig;
+export type BtcTransfer = {
+    /**
+     * - The transaction's id.
+     */
+    txid: string;
+    /**
+     * - The user's own address.
+     */
+    address: string;
+    /**
+     * - The index of the output in the transaction.
+     */
+    vout: number;
+    /**
+     * - The block height (if unconfirmed, 0).
+     */
+    height: number;
+    /**
+     * - The value of the transfer (in satoshis).
+     */
+    value: number;
+    /**
+     * - The direction of the transfer.
+     */
+    direction: "incoming" | "outgoing";
+    /**
+     * - The fee paid for the full transaction (in satoshis).
+     */
+    fee?: number;
+    /**
+     * - The receiving address for outgoing transfers.
+     */
+    recipient?: string;
+};
 import WalletAccountReadOnlyBtc from './wallet-account-read-only-btc.js';

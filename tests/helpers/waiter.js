@@ -17,7 +17,7 @@ export default class Waiter {
 
     this._subscriber = new zmq.Subscriber({ linger: 0 })
     this._subscriber.connect(`tcp://${host}:${zmqPort}`)
-    this._subscriber.subscribe('hashblock')
+
   }
 
   async waitUntilBitcoinCoreIsStarted () {
@@ -82,11 +82,13 @@ export default class Waiter {
 
   async mine (blocks = 1) {
     const miner = this._bitcoin.getNewAddress()
+    const t = this._waitForBlocks(blocks)
     this._bitcoin.generateToAddress(blocks, miner)
-    await this._waitForBlocks(blocks)
+    await t
   }
 
   async _waitForBlocks (blocks) {
+    this._subscriber.subscribe('hashblock')
     const timeout = new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         reject(new Error('Waiter timed out waiting for blocks.'))

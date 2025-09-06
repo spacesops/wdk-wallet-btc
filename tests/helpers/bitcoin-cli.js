@@ -1,8 +1,4 @@
 import { execSync } from 'child_process'
-import {
-  BITCOIN_CLI_PATH,
-  BITCOIND_PATH
-} from '../config.js'
 
 const EXEC_SYNC_OPTIONS = {
   stdio: ['inherit', 'pipe', 'ignore']
@@ -16,7 +12,7 @@ export default class BitcoinCli {
 
     this._wallet = wallet
 
-    this._cli = `${BITCOIN_CLI_PATH} -regtest -rpcconnect=${host} -rpcport=${port} -datadir=${dataDir}`
+    this._cli = `bitcoin-cli -regtest -rpcconnect=${host} -rpcport=${port} -datadir=${dataDir}`
   }
 
   setWallet (wallet) {
@@ -26,7 +22,7 @@ export default class BitcoinCli {
   start () {
     const { host, port, dataDir, zmqPort } = this._config
 
-    execSync(BITCOIND_PATH + ' -regtest -daemon ' +
+    execSync('bitcoind -regtest -daemon ' +
       '-server=1 ' +
       '-txindex=1 ' +
       '-fallbackfee=0.0001 ' +
@@ -106,6 +102,8 @@ export default class BitcoinCli {
       return sum + Math.round(out.value * 1e8)
     }, 0)
 
-    return inputTotal - outputTotal
+    const feeSats = inputTotal - outputTotal
+
+    return feeSats
   }
 }

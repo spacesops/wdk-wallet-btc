@@ -12,144 +12,134 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import BaseElectrumClient from '@mempool/electrum-client'
+import MempoolElectrumClient from '@mempool/electrum-client'
 
 /**
- * @typedef {Object} ElectrumIdentity
- * @property {string} [client='wdk-wallet'] - Client name reported to the server.
- * @property {string} [version='1.4'] - Electrum protocol version.
+ * @typedef {Object} ElectrumConfig
+ * @property {string} [client] - The name of the client reported to the server (default: 'wdk-wallet').
+ * @property {string} [version] - The electrum protocol version (default: '1.4').
  */
 
 /**
- * @typedef {Object} ElectrumPersistence
- * @property {number} [retryPeriod=1000] - ms between reconnect attempts.
- * @property {number} [maxRetry=2] - max reconnect attempts before failing.
- * @property {number} [pingPeriod=120000] - ms between keepalive pings.
- * @property {(err: Error | null) => void | null} [callback=null] - optional status callback.
+ * @typedef {Object} PersistencePolicy
+ * @property {number} [maxRetry] - The maximum reconnection attempts before failing (default: 2).
+ * @property {number} [retryPeriod] - The delay between reconnect attempts, in ms (default: 1_000).
+ * @property {number} [pingPeriod] - The delay between keep-alive pings, in ms (default: 100_000).
+ * @property {(err: Error | null) => void} [callback] - An optional status callback.
  */
 
 /**
- * @typedef {Object} ElectrumCtorExtras
- * @property {ElectrumIdentity} [identity] - (unused; provided via top-level args)
- * @property {ElectrumPersistence} [persistence] - Persistence policy.
- * @property {any} [options] - Socket options consumed by base client.
- * @property {any} [callbacks] - Event callbacks consumed by base client.
- */
-
-/**
- * A thin wrapper around {@link @mempool/electrum-client} that lazily initializes the underlying Electrum connection on first RPC call.
+ * A thin wrapper around {@link @mempool/electrum-client} that lazily initializes the underlying
+ * electrum connection on first rpc call.
  *
- * The instance returned from the constructor is a Proxy that intercepts all method calls
- * (except `close`, `initElectrum`, and `reconnect`) to ensure the client is initialized.
- *
- * @example
- * const ec = new ElectrumClient(50001, 'electrum.blockstream.info', 'tcp')
- * const feeRate = await ec.blockchainEstimatefee(1) // initialization is performed automatically
- *
- * @extends BaseElectrumClient
+ * The instance returned from the constructor is a proxy that intercepts all method calls
+ * except `close`, `initElectrum`, and `reconnect` and ensures the client is initialized.
  */
-export default class ElectrumClient extends BaseElectrumClient {
+export default class ElectrumClient extends MempoolElectrumClient {
   /**
-   * Create a new Electrum client wrapper.
+   * Create a new electrum client wrapper.
    *
-   * @param {number} port - Electrum server port (e.g. `50001`, `50002`).
-   * @param {string} host - Electrum server hostname.
-   * @param {'tcp' | 'tls' | 'ssl'} protocol - Transport protocol.
-   * @param {Object} [opts={}] - Optional configuration.
-   * @param {string} [opts.client='wdk-wallet'] - Client name reported to the server.
-   * @param {string} [opts.version='1.4'] - Electrum protocol version.
-   * @param {ElectrumPersistence} [opts.persistence] - Reconnect & keepalive behavior.
-   * @param {any} [opts.options] - Low-level socket options for base client.
-   * @param {any} [opts.callbacks] - Low-level callbacks for base client.
-   *
-   * @returns {ElectrumClient} A proxied instance that auto-initializes on first RPC.
+   * @param {number} port - The electrum server's port.
+   * @param {string} host - The electrum server's hostname.
+   * @param {'tcp' | 'tls' | 'ssl'} protocol - The transport protocol to use.
+   * @param {PersistencePolicy} [persistencePolicy] - The persistence policy.
    */
-  constructor (
-    port,
-    host,
-    protocol,
-    {
-      client = 'wdk-wallet',
-      version = '1.4',
-      persistence = { retryPeriod: 1000, maxRetry: 2, pingPeriod: 120000, callback: null },
-      options,
-      callbacks
-    } = {}
-  ) {
-    super(port, host, protocol, options, callbacks)
+  constructor (port, host, protocol, persistencePolicy = { }) {
+    super(port, host, protocol)
 
-    /** @private @type {ElectrumIdentity} */
-    this._clientInfo = { client, version }
-
-    /** @private @type {ElectrumPersistence} */
-    this._persistence = persistence
+    const { retryPeriod = 1_000, maxRetry = 2, pingPeriod = 120_000, callback = null } = persistencePolicy
 
     /**
-     * Promise representing an in-flight or completed initialization.
-     * Reset to `null` on failure/close, re-created on next demand.
+     * @private
+     * @type {ElectrumConfig}
+     **/
+    this._electrumConfig = {
+      client: '@wdk/wallet-btc',
+      version: '1.4'
+    }
+
+    /**
+     * @private
+     * @type {PersistencePolicy}
+     **/
+    this._persistencePolicy = { retryPeriod, maxRetry, pingPeriod, callback }
+
+    /**
      * @private
      * @type {Promise<void> | null}
      */
     this._ready = null
 
-    const target = this
+    const _this = this
+
     return new Proxy(this, {
-      get (obj, prop, receiver) {
-        const value = Reflect.get(obj, prop, receiver)
-        if (typeof value !== 'function') return value
+      get (target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver)
+
+        if (typeof value !== 'function') {
+          return value
+        }
 
         if (prop === 'close' || prop === 'initElectrum' || prop === 'reconnect') {
-          return value.bind(obj)
+          return value.bind(target)
         }
 
         return async function (...args) {
-          await target._ensure()
-          return value.apply(obj, args)
+          await _this._ensure()
+          return value.apply(target, args)
         }
       }
     })
   }
 
   /**
-   * Ensure the Electrum connection is initialized. If a previous attempt failed or the
+   * Ensures the electrum connection is initialized. If a previous attempt failed or the
    * client was closed, a new initialization is attempted.
-  *
+   *
    * @private
-   * @param {number} [timeout=15000] - In ms.
-   * @returns {Promise<void>} Resolves when ready for RPC calls.
-   * @throws {Error} If hits a timeout or the init fails.
+   * @param {number} [timeout] - The timeout, in ms (default: 15_000).
+   * @returns {Promise<void>}
    */
-  _ensure (timeout = 15000) {
-    if (this._ready) return this._ready
+  _ensure (timeout = 15_000) {
+    if (this._ready) {
+      return this._ready
+    }
 
-    const initPromise = super.initElectrum(this._clientInfo, this._persistence)
-    const timeoutPromise = new Promise((_resolve, reject) => {
-      const t = setTimeout(() => reject(new Error('Electrum init timeout')), timeout)
-      if (typeof t.unref === 'function') t.unref()
+    const initElectrum = super.initElectrum(this._electrumConfig, this._persistencePolicy)
+
+    const timeoutTask = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Electrum client initialization time out.')), timeout)
+      timer.unref()
     })
 
-    this._ready = Promise.race([initPromise, timeoutPromise]).catch(err => {
+    this._ready = Promise.race([initElectrum, timeoutTask]).catch(error => {
       this._ready = null
-      throw err
+      throw error
     })
 
     return this._ready
   }
 
   /**
-   * Recreate the underlying socket and reinitialize the session.
+   * Recreates the underlying socket and reinitializes the session.
    *
-   * @returns {Promise<void>} Resolves when reconnected and ready.
+   * @returns {Promise<void>}
    */
   reconnect () {
     this.initSocket()
-    const p = super.initElectrum(this._clientInfo, this._persistence)
-    this._ready = p.catch(err => { this._ready = null; throw err })
+
+    const initElectrum = super.initElectrum(this._electrumConfig, this._persistencePolicy)
+
+    this._ready = initElectrum.catch(error => {
+      this._ready = null
+      throw error
+    })
+
     return this._ready
   }
 
   /**
-   * Close the connection and clear readiness state.
+   * Closes the connection.
    *
    * @returns {void}
    */

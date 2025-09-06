@@ -1,39 +1,52 @@
-export const DUST_LIMIT: 546;
 export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     /**
      * Creates a new bitcoin read-only wallet account.
      *
      * @param {string} address - The account's address.
-     * @param {BtcWalletConfig} [config] - The configuration object.
+     * @param {Omit<BtcWalletConfig, 'bip'>} [config] - The configuration object.
      */
-    constructor(address: string, config?: BtcWalletConfig);
+    constructor(address: string, config?: Omit<BtcWalletConfig, "bip">);
     /**
-     * The wallet account configuration.
+     * The read-only wallet account configuration.
      *
      * @protected
-     * @type {BtcWalletConfig}
+     * @type {Omit<BtcWalletConfig, 'bip'>}
      */
-    protected _config: BtcWalletConfig;
+    protected _config: Omit<BtcWalletConfig, "bip">;
     /**
-     * Electrum client to interact with a bitcoin node.
+     * The network.
+     *
+     * @protected
+     * @type {Network}
+     */
+    protected _network: Network;
+    /**
+     * An electrum client to interact with the bitcoin node.
      *
      * @protected
      * @type {ElectrumClient}
      */
     protected _electrumClient: ElectrumClient;
     /**
-     * The bitcoin network (bitcoinjs-lib).
-     * @protected
-     * @type {import('bitcoinjs-lib').Network}
-     */
-    protected _network: import("bitcoinjs-lib").Network;
-    /**
-     * Returns a transaction's receipt.
+     * Returns the account's eth balance.
      *
-     * @param {string} hash - The transaction's hash.
-     * @returns {Promise<BtcTransactionReceipt | null>} – The receipt, or null if the transaction has not been included in a block yet.
+     * @returns {Promise<bigint>} The eth balance (in weis).
      */
-    getTransactionReceipt(hash: string): Promise<BtcTransactionReceipt | null>;
+    getBalance(): Promise<bigint>;
+    /**
+     * Returns the account balance for a specific token.
+     *
+     * @param {string} tokenAddress - The smart contract address of the token.
+     * @returns {Promise<bigint>} The token balance (in base unit).
+     */
+    getTokenBalance(tokenAddress: string): Promise<bigint>;
+    /**
+     * Quotes the costs of a send transaction operation.
+     *
+     * @param {BtcTransaction} tx - The transaction.
+     * @returns {Promise<Omit<TransactionResult, 'hash'>>} The transaction's quotes.
+     */
+    quoteSendTransaction(tx: BtcTransaction): Promise<Omit<TransactionResult, "hash">>;
     /**
      * Quotes the costs of a transfer operation.
      *
@@ -42,57 +55,51 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
      */
     quoteTransfer(options: TransferOptions): Promise<Omit<TransferResult, "hash">>;
     /**
-     * Returns the bitcoin transfers history of the account.
+     * Returns a transaction's receipt.
      *
-     * @param {Object} [options] - The options.
-     * @param {"incoming" | "outgoing" | "all"} [options.direction] - If set, only returns transfers with the given direction (default: "all").
-     * @param {number} [options.limit] - The number of transfers to return (default: 10).
-     * @param {number} [options.skip] - The number of transfers to skip (default: 0).
-     * @returns {Promise<BtcTransfer[]>} The bitcoin transfers.
+     * @param {string} hash - The transaction's hash.
+     * @returns {Promise<BtcTransactionReceipt | null>} – The receipt, or null if the transaction has not been included in a block yet.
      */
-    getTransfers(options?: {
-        direction?: "incoming" | "outgoing" | "all";
-        limit?: number;
-        skip?: number;
-    }): Promise<BtcTransfer[]>;
+    getTransactionReceipt(hash: string): Promise<BtcTransactionReceipt | null>;
     /**
-     * Build a fee-aware funding plan.
-     *
-     * Uses `descriptors` + `coinselect` to choose inputs, at a given feeRate (sats/vB). Returns the selected UTXOs (in the shape expected by the PSBT builder), the computed fee, and the resulting change value.
+     * Computes the sha-256 hash of the output script for this wallet's address, reverses the byte order,
+     * and returns it as a hex string.
      *
      * @protected
-     * @param {Object} params
-     * @param {string} params.fromAddress - The sender's address.
-     * @param {string} params.toAddress - The recipient's address.
-     * @param {number} params.amount - Amount to send in sats.
-     * @param {number} params.feeRate - Fee rate in sats/vB.
-     * @returns {Promise<{ utxos: Array<any>, fee: number, changeValue: number }>}
-     * utxos: [{ tx_hash, tx_pos, value, vout: { value, scriptPubKey: { hex } } }, ...]
-     * fee: total fee in sats chosen by coinselect
-     * changeValue: total inputs - amount - fee (sats)
+     * @returns {Promise<string>} The reversed sha-256 script hash as a hex-encoded string.
+     */
+    protected _getScriptHash(): Promise<string>;
+    /**
+     * Builds and returns a fee-aware funding plan for sending a transaction.
+     *
+     * Uses descriptors + coinselect to choose inputs, at a given feeRate (sats/vB). Returns the selected
+     * UTXOs (in the shape expected by the PSBT builder), the computed fee, and the resulting change value.
+     *
+     * @protected
+     * @param {Object} tx - The transaction.
+     * @param {string} tx.fromAddress - The sender's address.
+     * @param {string} tx.toAddress - The recipient's address.
+     * @param {number | bigint} tx.amount - The amount to send (in satoshis).
+     * @param {number} tx.feeRate - The fee rate (in sats/vB).
+     * @returns {Promise<{ utxos: OutputWithValue[], fee: number, changeValue: number }>} - The funding plan.
      */
     protected _planSpend({ fromAddress, toAddress, amount, feeRate }: {
         fromAddress: string;
         toAddress: string;
-        amount: number;
+        amount: number | bigint;
         feeRate: number;
     }): Promise<{
-        utxos: Array<any>;
+        utxos: OutputWithValue[];
         fee: number;
         changeValue: number;
     }>;
-    /**
-     * Computes the SHA-256 hash of the output script for this wallet's address,
-     * reverses the byte order, and returns it as a hex string.
-     *
-     * @private
-     * @returns {Promise<string>} The reversed SHA-256 script hash as a hex-encoded string.
-     */
-    private _getScriptHash;
 }
+export type OutputWithValue = import("@bitcoinerlab/coinselect").OutputWithValue;
+export type Network = import("bitcoinjs-lib").Network;
+export type BtcTransactionReceipt = import("bitcoinjs-lib").Transaction;
 export type TransactionResult = import("@wdk/wallet").TransactionResult;
 export type TransferOptions = import("@wdk/wallet").TransferOptions;
-export type BtcTransactionReceipt = import("bitcoinjs-lib").Transaction;
+export type TransferResult = import("@wdk/wallet").TransferResult;
 export type BtcTransaction = {
     /**
      * - The transaction's recipient.
@@ -101,7 +108,7 @@ export type BtcTransaction = {
     /**
      * - The amount of bitcoins to send to the recipient (in satoshis).
      */
-    value: number;
+    value: number | bigint;
 };
 export type BtcWalletConfig = {
     /**
@@ -113,51 +120,17 @@ export type BtcWalletConfig = {
      */
     port?: number;
     /**
-     * - The BIP address type. Available values: 44 or 84 (default: 44).
-     */
-    bip?: 44 | 84;
-    /**
      * The name of the network to use (default: "bitcoin").
      */
     network?: "bitcoin" | "regtest" | "testnet";
     /**
-     * - The connection protocol to use (default: "tcp").
+     * - The transport protocol to use (default: "tcp").
      */
     protocol?: "tcp" | "tls" | "ssl";
-};
-export type BtcTransfer = {
     /**
-     * - The transaction's id.
+     * - The bip address type; available values: 44 or 84 (default: 44).
      */
-    txid: string;
-    /**
-     * - The user's own address.
-     */
-    address: string;
-    /**
-     * - The index of the output in the transaction.
-     */
-    vout: number;
-    /**
-     * - The block height (if unconfirmed, 0).
-     */
-    height: number;
-    /**
-     * - The value of the transfer (in satoshis).
-     */
-    value: number;
-    /**
-     * - The direction of the transfer.
-     */
-    direction: "incoming" | "outgoing";
-    /**
-     * - The fee paid for the full transaction (in satoshis).
-     */
-    fee?: number;
-    /**
-     * - The receiving address for outgoing transfers.
-     */
-    recipient?: string;
+    bip?: 44 | 84;
 };
 import { WalletAccountReadOnly } from '@wdk/wallet';
 import ElectrumClient from './electrum-client.js';

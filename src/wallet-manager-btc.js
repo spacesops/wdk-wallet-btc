@@ -32,24 +32,13 @@ export default class WalletManagerBtc extends WalletManager {
    */
   constructor (seed, config = {}) {
     super(seed, config)
-
-    /**
-     * The btc wallet configuration.
-     *
-     * @protected
-     * @type {BtcWalletConfig}
-     */
-    this._config = config
-
-    /** @private */
-    this._accounts = {}
   }
 
   /**
-   * Returns the wallet account at a specific index (see [BIP-84](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki)).
+   * Returns the wallet account at a specific index (see [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)).
    *
    * @example
-   * // Returns the account with derivation path m/84'/0'/0'/0/1
+   * // Returns the account with derivation path m/44'/0'/0'/0/1
    * const account = await wallet.getAccount(1);
    * @param {number} [index] - The index of the account to get (default: 0).
    * @returns {Promise<WalletAccountBtc>} The account.
@@ -62,7 +51,7 @@ export default class WalletManagerBtc extends WalletManager {
    * Returns the wallet account at a specific derivation path.
    *
    * @example
-   * // Returns the account with derivation path m/84'/0'/0'/0/1
+   * // Returns the account with derivation path m/44'/0'/0'/0/1
    * const account = await wallet.getAccountByPath("0'/0/1");
    * @param {string} path - The derivation path (e.g. "0'/0/0").
    * @returns {Promise<WalletAccountBtc>} The account.
@@ -87,17 +76,9 @@ export default class WalletManagerBtc extends WalletManager {
 
     const { fastestFee, hourFee } = await response.json()
 
-    return { normal: hourFee, fast: fastestFee }
-  }
-
-  /**
-   * Disposes all the wallet accounts, erasing their private keys from the memory and closing the connection with the electrum server.
-   */
-  dispose () {
-    for (const account of Object.values(this._accounts)) {
-      account.dispose()
+    return {
+      normal: BigInt(hourFee),
+      fast: BigInt(fastestFee)
     }
-
-    this._accounts = {}
   }
 }

@@ -6,13 +6,11 @@ export default class WalletManagerBtc extends WalletManager {
      * @param {BtcWalletConfig} [config] - The configuration object.
      */
     constructor(seed: string | Uint8Array, config?: BtcWalletConfig);
-    /** @private */
-    private _accounts;
     /**
-     * Returns the wallet account at a specific index (see [BIP-84](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki)).
+     * Returns the wallet account at a specific index (see [BIP-44](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)).
      *
      * @example
-     * // Returns the account with derivation path m/84'/0'/0'/0/1
+     * // Returns the account with derivation path m/44'/0'/0'/0/1
      * const account = await wallet.getAccount(1);
      * @param {number} [index] - The index of the account to get (default: 0).
      * @returns {Promise<WalletAccountBtc>} The account.
@@ -22,12 +20,18 @@ export default class WalletManagerBtc extends WalletManager {
      * Returns the wallet account at a specific derivation path.
      *
      * @example
-     * // Returns the account with derivation path m/84'/0'/0'/0/1
+     * // Returns the account with derivation path m/44'/0'/0'/0/1
      * const account = await wallet.getAccountByPath("0'/0/1");
      * @param {string} path - The derivation path (e.g. "0'/0/0").
      * @returns {Promise<WalletAccountBtc>} The account.
      */
     getAccountByPath(path: string): Promise<WalletAccountBtc>;
+    /**
+     * Returns the current fee rates.
+     *
+     * @returns {Promise<FeeRates>} The fee rates (in satoshis).
+     */
+    getFeeRates(): Promise<FeeRates>;
 }
 export type FeeRates = import("@wdk/wallet").FeeRates;
 export type BtcWalletConfig = import("./wallet-account-btc.js").BtcWalletConfig;
