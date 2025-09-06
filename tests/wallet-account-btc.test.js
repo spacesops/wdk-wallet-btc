@@ -323,4 +323,94 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
       readOnlyAccount._electrumClient.close()
     })
   })
+
+  describe('getTransfers', () => {
+    const TRANSFERS = []
+    let account
+
+    async function createIncomingTransfer () {
+      const address = await account.getAddress()
+      const hash = bitcoin.sendToAddress(address, 0.01)
+      await waiter.mine()
+      const transaction = bitcoin.getTransaction(hash)
+      const fee = Math.round(Math.abs(transaction.fee) * 1e8)
+
+      return {
+        txid: hash,
+        address,
+        vout: transaction.details[0].vout,
+        height: transaction.blockheight,
+        value: 1_000_000,
+        direction: 'incoming',
+        fee,
+        recipient: address
+      }
+    }
+
+    async function createOutgoingTransfer () {
+      const address = await account.getAddress()
+      const recipient = bitcoin.getNewAddress()
+
+      const { hash, fee } = await account.sendTransaction({
+        to: recipient,
+        value: 100_000
+      })
+
+      await waiter.mine()
+
+      const transaction = bitcoin.getTransaction(hash)
+
+      return {
+        txid: hash,
+        address,
+        vout: 0,
+        height: transaction.blockheight,
+        value: 100_000,
+        direction: 'outgoing',
+        fee: Number(fee),
+        recipient
+      }
+    }
+
+    beforeAll(async () => {
+      account = new WalletAccountBtc(SEED_PHRASE, "0'/0/10", CONFIGURATION)
+
+      for (let i = 0; i < 5; i++) {
+        const transfer = i % 2 === 0
+          ? await createIncomingTransfer()
+          : await createOutgoingTransfer()
+        TRANSFERS.push(transfer)
+      }
+    })
+
+    afterAll(() => {
+      account.dispose()
+    })
+
+    test('should return the full transfer history', async () => {
+      const transfers = await account.getTransfers()
+      expect(transfers).toEqual(TRANSFERS)
+    })
+
+    test('should return the incoming transfer history', async () => {
+      const transfers = await account.getTransfers({ direction: 'incoming' })
+      expect(transfers).toEqual([TRANSFERS[0], TRANSFERS[2], TRANSFERS[4]])
+    })
+
+    test('should return the outgoing transfer history', async () => {
+      const transfers = await account.getTransfers({ direction: 'outgoing' })
+      expect(transfers).toEqual([TRANSFERS[1], TRANSFERS[3]])
+    })
+
+    test('should correctly paginate the transfer history', async () => {
+      const transfers = await account.getTransfers({ limit: 2, skip: 1 })
+      expect(transfers).toEqual([TRANSFERS[1], TRANSFERS[2]])
+    })
+
+    test('should correctly filter and paginate the transfer history', async () => {
+      const transfers = await account.getTransfers({ limit: 2, skip: 1, direction: 'incoming' })
+      expect(transfers).toEqual([TRANSFERS[2], TRANSFERS[4]])
+    })
+  })
+  
 })
