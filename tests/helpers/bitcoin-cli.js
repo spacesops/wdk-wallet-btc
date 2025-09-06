@@ -89,6 +89,18 @@ export default class BitcoinCli {
     return this.call(`getrawtransaction ${txid} true`)
   }
 
+  estimateSmartFee (confTarget = 1, mode = 'conservative') {
+    return this.call(`estimatesmartfee ${confTarget} ${mode}`)
+  }
+
+  estimateSatsPerVByte (confTarget = 1, mode = 'conservative') {
+    const smartFee = this.estimateSmartFee(confTarget, mode)
+
+    const feeRate = smartFee?.feerate ? Number(smartFee.feerate) : 0
+
+    return Math.max(Math.round(feeRate * 100_000), 1)
+  }
+
   getTransactionFeeSats (txid) {
     const tx = this.getRawTransactionVerbose(txid)
 
@@ -105,15 +117,5 @@ export default class BitcoinCli {
     const feeSats = inputTotal - outputTotal
 
     return feeSats
-  }
-  
-  estimateSmartFee (confTarget = 1, mode = 'conservative') {
-    return this.call(`estimatesmartfee ${confTarget} ${mode}`)
-  }
-
-  estimateSatsPerVByte (confTarget = 1, mode = 'conservative') {
-    const res = this.estimateSmartFee(confTarget, mode)
-    const feerate = res && res.feerate != null ? Number(res.feerate) : 0
-    return Math.max(Math.round(feerate * 100_000), 1)
   }
 }

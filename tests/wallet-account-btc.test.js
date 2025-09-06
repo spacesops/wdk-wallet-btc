@@ -209,28 +209,26 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
 
     test('should collapse dust change into fee when leftover <= dust limit', async () => {
       const account = new WalletAccountBtc(SEED_PHRASE, "0'/0/5", CONFIGURATION)
-      const addr = await account.getAddress()
-      bitcoin.sendToAddress(addr, 0.001)
+      const address = await account.getAddress()
+      bitcoin.sendToAddress(address, 0.001)
       await waiter.mine()
 
       const balance = await account.getBalance()
+      const nearMaxAmount = Math.max(1, Number(balance) - 2_000)
+      const { fee: feeEstimate } = await account.quoteSendTransaction({ to: recipient, value: nearMaxAmount })
 
-      const nearMaxAmount = Math.max(1, Number(balance) - 2000)
-      const { fee: estFee } = await account.quoteSendTransaction({ to: recipient, value: nearMaxAmount })
-
-      const spend = Math.max(1, Number(balance) - Number(estFee) - (DUST_LIMIT - 1))
-
+      const spend = Math.max(1, Number(balance) - Number(feeEstimate) - (DUST_LIMIT - 1))
       const { hash, fee } = await account.sendTransaction({ to: recipient, value: spend })
       await waiter.mine()
 
-      const raw = bitcoin.getRawTransaction(hash)
-      const outputs = raw.vout.map(v =>
-        v.scriptPubKey.address || (v.scriptPubKey.addresses && v.scriptPubKey.addresses[0])
+      const rawTransaction = bitcoin.getRawTransaction(hash)
+
+      const outputs = rawTransaction.vout.map(({ scriptPubKey }) =>
+        scriptPubKey.address || (scriptPubKey.addresses && scriptPubKey.addresses[0])
       )
 
       expect(outputs).toContain(recipient)
-      expect(outputs).not.toContain(addr)
-
+      expect(outputs).not.toContain(address)
       expect(fee).toBe(balance - BigInt(spend))
 
       account.dispose()
@@ -312,28 +310,18 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
     })
   })
 
-  describe('toReadOnlyAccount', () => {
-    test('should return a read-only copy of the account', async () => {
-      const readOnlyAccount = await account.toReadOnlyAccount()
-
-      expect(readOnlyAccount).toBeInstanceOf(WalletAccountReadOnlyBtc)
-
-      expect(await readOnlyAccount.getAddress()).toBe(ACCOUNTS[bip].address)
-
-      readOnlyAccount._electrumClient.close()
-    })
-  })
-
   describe('getTransfers', () => {
     const TRANSFERS = []
+
     let account
 
     async function createIncomingTransfer () {
       const address = await account.getAddress()
       const hash = bitcoin.sendToAddress(address, 0.01)
       await waiter.mine()
+
       const transaction = bitcoin.getTransaction(hash)
-      const fee = Math.round(Math.abs(transaction.fee) * 1e8)
+      const fee = Math.round(Math.abs(transaction.fee) * 1e+8)
 
       return {
         txid: hash,
@@ -349,6 +337,7 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
 
     async function createOutgoingTransfer () {
       const address = await account.getAddress()
+
       const recipient = bitcoin.getNewAddress()
 
       const { hash, fee } = await account.sendTransaction({
@@ -379,6 +368,7 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
         const transfer = i % 2 === 0
           ? await createIncomingTransfer()
           : await createOutgoingTransfer()
+
         TRANSFERS.push(transfer)
       }
     })
@@ -389,28 +379,44 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
 
     test('should return the full transfer history', async () => {
       const transfers = await account.getTransfers()
+
       expect(transfers).toEqual(TRANSFERS)
     })
 
     test('should return the incoming transfer history', async () => {
       const transfers = await account.getTransfers({ direction: 'incoming' })
+
       expect(transfers).toEqual([TRANSFERS[0], TRANSFERS[2], TRANSFERS[4]])
     })
 
     test('should return the outgoing transfer history', async () => {
       const transfers = await account.getTransfers({ direction: 'outgoing' })
+
       expect(transfers).toEqual([TRANSFERS[1], TRANSFERS[3]])
     })
 
     test('should correctly paginate the transfer history', async () => {
       const transfers = await account.getTransfers({ limit: 2, skip: 1 })
+
       expect(transfers).toEqual([TRANSFERS[1], TRANSFERS[2]])
     })
 
     test('should correctly filter and paginate the transfer history', async () => {
       const transfers = await account.getTransfers({ limit: 2, skip: 1, direction: 'incoming' })
+
       expect(transfers).toEqual([TRANSFERS[2], TRANSFERS[4]])
     })
   })
-  
+
+  describe('toReadOnlyAccount', () => {
+    test('should return a read-only copy of the account', async () => {
+      const readOnlyAccount = await account.toReadOnlyAccount()
+
+      expect(readOnlyAccount).toBeInstanceOf(WalletAccountReadOnlyBtc)
+
+      expect(await readOnlyAccount.getAddress()).toBe(ACCOUNTS[bip].address)
+
+      readOnlyAccount._electrumClient.close()
+    })
+  })
 })
