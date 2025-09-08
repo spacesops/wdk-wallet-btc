@@ -11,253 +11,141 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-'use strict'
 
-import { connect as _netConnect } from 'net'
-import { connect as __tlsConnect } from 'tls'
-import { networks, address as _address, crypto } from 'bitcoinjs-lib'
+import MempoolElectrumClient from '@mempool/electrum-client'
 
-export default class ElectrumClient {
-  #network
-  #host
-  #port
-  #protocol
+/**
+ * @typedef {Object} ElectrumConfig
+ * @property {string} [client] - The name of the client reported to the server (default: 'wdk-wallet').
+ * @property {string} [version] - The electrum protocol version (default: '1.4').
+ */
 
-  #socket
-  #connected
-  #pendingRequests
+/**
+ * @typedef {Object} PersistencePolicy
+ * @property {number} [maxRetry] - The maximum reconnection attempts before failing (default: 2).
+ * @property {number} [retryPeriod] - The delay between reconnect attempts, in ms (default: 1_000).
+ * @property {number} [pingPeriod] - The delay between keep-alive pings, in ms (default: 100_000).
+ * @property {(err: Error | null) => void} [callback] - An optional status callback.
+ */
 
-  constructor (config = {}) {
-    this.#network = networks[config.network || 'bitcoin']
+/**
+ * A thin wrapper around {@link @mempool/electrum-client} that lazily initializes the underlying
+ * electrum connection on first rpc call.
+ *
+ * The instance returned from the constructor is a proxy that intercepts all method calls
+ * except `close`, `initElectrum`, and `reconnect` and ensures the client is initialized.
+ */
+export default class ElectrumClient extends MempoolElectrumClient {
+  /**
+   * Create a new electrum client wrapper.
+   *
+   * @param {number} port - The electrum server's port.
+   * @param {string} host - The electrum server's hostname.
+   * @param {'tcp' | 'tls' | 'ssl'} protocol - The transport protocol to use.
+   * @param {PersistencePolicy} [persistencePolicy] - The persistence policy.
+   */
+  constructor (port, host, protocol, persistencePolicy = { }) {
+    super(port, host, protocol)
 
-    if (!this.#network) {
-      throw new Error(`Invalid network: ${config.network}.`)
+    const { retryPeriod = 1_000, maxRetry = 2, pingPeriod = 120_000, callback = null } = persistencePolicy
+
+    /**
+     * @private
+     * @type {ElectrumConfig}
+     **/
+    this._electrumConfig = {
+      client: '@wdk/wallet-btc',
+      version: '1.4'
     }
 
-    this.#host = config.host || 'electrum.blockstream.info'
-    this.#port = config.port || 50001
-    this.#protocol = config.protocol || 'tcp'
+    /**
+     * @private
+     * @type {PersistencePolicy}
+     **/
+    this._persistencePolicy = { retryPeriod, maxRetry, pingPeriod, callback }
 
-    this.#socket = null
-    this.#connected = false
-    this.#pendingRequests = new Map()
-  }
+    /**
+     * @private
+     * @type {Promise<void> | null}
+     */
+    this._ready = null
 
-  get network () {
-    return this.#network
-  }
+    const _this = this
 
-  connect () {
-    return new Promise((resolve, reject) => {
-      try {
-        const socketOptions = {
-          port: this.#port,
-          host: this.#host,
-          reuseAddress: true,
-          noDelay: true,
-          keepAlive: true,
-          keepAliveInitialDelay: 60000
+    return new Proxy(this, {
+      get (target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver)
+
+        if (typeof value !== 'function') {
+          return value
         }
 
-        const socket = this.#protocol === 'tcp'
-          ? _netConnect(socketOptions)
-          : __tlsConnect(socketOptions)
-
-        socket.setTimeout(30000)
-        socket.on('timeout', () => {
-          socket.destroy()
-          this.#connected = false
-          reject(new Error('Electrum client connection time-out.'))
-        })
-
-        socket.on('connect', () => {
-          this.#socket = socket
-          this.#connected = true
-          this.#setupSocket()
-          resolve()
-        })
-
-        socket.on('error', (error) => {
-          this.#connected = false
-
-          if (this.#socket) {
-            this.#socket.destroy()
-            this.#socket = null
-          }
-          reject(error)
-        })
-
-        socket.on('close', () => {
-          this.#connected = false
-          this.#socket = null
-
-          this.#pendingRequests.clear()
-        })
-
-        socket.on('end', () => {
-          this.#connected = false
-          this.#socket = null
-        })
-      } catch (error) {
-        this.#connected = false
-
-        if (this.#socket) {
-          this.#socket.destroy()
-          this.#socket = null
+        if (prop === 'close' || prop === 'initElectrum' || prop === 'reconnect') {
+          return value.bind(target)
         }
-        reject(error)
-      }
-    })
-  }
 
-  #setupSocket () {
-    let buffer = ''
-
-    this.#socket.setEncoding('utf-8')
-    this.#socket.on('data', (data) => {
-      buffer += data
-
-      while (true) {
-        const newlineIndex = buffer.indexOf('\n')
-        if (newlineIndex === -1) break
-
-        const line = buffer.slice(0, newlineIndex)
-        buffer = buffer.slice(newlineIndex + 1)
-
-        try {
-          const response = JSON.parse(line)
-          this.#handleResponse(response)
-        } catch (error) {
-          console.error('Failed to parse response:', error)
+        return async function (...args) {
+          await _this._ensure()
+          return value.apply(target, args)
         }
       }
     })
   }
 
-  #handleResponse (response) {
-    if (response.id && this.#pendingRequests.has(response.id)) {
-      const { resolve, reject } = this.#pendingRequests.get(response.id)
-      this.#pendingRequests.delete(response.id)
-
-      if (response.error) {
-        reject(new Error(response.error.message))
-      } else {
-        resolve(response.result)
-      }
-    }
-  }
-
-  async disconnect () {
-    return new Promise((resolve) => {
-      if (this.#socket && this.#connected) {
-        this.#socket.once('close', () => {
-          this.#connected = false
-          this.#socket = null
-          this.#pendingRequests.clear()
-          resolve()
-        })
-
-        try {
-          this.#socket.end()
-        } catch (error) {
-          this.#socket.destroy()
-          this.#socket = null
-          this.#connected = false
-          this.#pendingRequests.clear()
-          resolve()
-        }
-      } else {
-        resolve()
-      }
-    })
-  }
-
-  async #request (method, params = [], retries = 2) {
-    if (!this.isConnected()) {
-      try {
-        await this.connect()
-      } catch (connectError) {
-        if (retries > 0) {
-          await new Promise(resolve => setTimeout(resolve, 1000))
-
-          return this.#request(method, params, retries - 1)
-        }
-        throw new Error(`Failed to connect after retries: ${connectError.message}.`)
-      }
+  /**
+   * Ensures the electrum connection is initialized. If a previous attempt failed or the
+   * client was closed, a new initialization is attempted.
+   *
+   * @private
+   * @param {number} [timeout] - The timeout, in ms (default: 15_000).
+   * @returns {Promise<void>}
+   */
+  _ensure (timeout = 15_000) {
+    if (this._ready) {
+      return this._ready
     }
 
-    return new Promise((resolve, reject) => {
-      const id = Math.floor(Math.random() * 1000000)
-      const request = {
-        id,
-        method,
-        params
-      }
+    const initElectrum = super.initElectrum(this._electrumConfig, this._persistencePolicy)
 
-      const timeoutId = setTimeout(() => {
-        this.#pendingRequests.delete(id)
-        reject(new Error('Electrum client request time-out.'))
-      }, 30000)
-
-      this.#pendingRequests.set(id, {
-        resolve: (result) => {
-          clearTimeout(timeoutId)
-          resolve(result)
-        },
-        reject: (error) => {
-          clearTimeout(timeoutId)
-          reject(error)
-        }
-      })
-
-      try {
-        if (!this.#socket || !this.#connected) {
-          throw new Error('Electrum client websocket client not connected.')
-        }
-        this.#socket.write(JSON.stringify(request) + '\n')
-      } catch (error) {
-        clearTimeout(timeoutId)
-        this.#pendingRequests.delete(id)
-        reject(error)
-      }
+    const timeoutTask = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Electrum client initialization time out.')), timeout)
+      timer.unref()
     })
+
+    this._ready = Promise.race([initElectrum, timeoutTask]).catch(error => {
+      this._ready = null
+      throw error
+    })
+
+    return this._ready
   }
 
-  async getHistory (address) {
-    const scriptHash = this.getScriptHash(address)
-    return await this.#request('blockchain.scripthash.get_history', [scriptHash])
+  /**
+   * Recreates the underlying socket and reinitializes the session.
+   *
+   * @returns {Promise<void>}
+   */
+  reconnect () {
+    this.initSocket()
+
+    const initElectrum = super.initElectrum(this._electrumConfig, this._persistencePolicy)
+
+    this._ready = initElectrum.catch(error => {
+      this._ready = null
+      throw error
+    })
+
+    return this._ready
   }
 
-  async getUnspent (address) {
-    const scriptHash = this.getScriptHash(address)
-    return await this.#request('blockchain.scripthash.listunspent', [scriptHash])
-  }
-
-  async getTransaction (txid) {
-    return await this.#request('blockchain.transaction.get', [txid, true])
-  }
-
-  async broadcastTransaction (txHex) {
-    return await this.#request('blockchain.transaction.broadcast', [txHex])
-  }
-
-  async getFeeEstimate (blocks = 1) {
-    return await this.#request('blockchain.estimatefee', [blocks])
-  }
-
-  getScriptHash (address) {
-    const script = _address.toOutputScript(address, this.#network)
-    const hash = crypto.sha256(script)
-    return Buffer.from(hash).reverse().toString('hex')
-  }
-
-  async getBalance (address) {
-    const scriptHash = this.getScriptHash(address)
-    const result = await this.#request('blockchain.scripthash.get_balance', [scriptHash])
-    return result
-  }
-
-  isConnected () {
-    return this.#connected
+  /**
+   * Closes the connection.
+   *
+   * @returns {void}
+   */
+  close () {
+    super.close()
+    this._ready = null
+    this.reconnect = ElectrumClient.prototype.reconnect.bind(this)
   }
 }

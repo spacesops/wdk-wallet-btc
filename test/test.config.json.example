@@ -1,7 +1,0 @@
-{
-  "port" : 7777,
-  "host": "localhost",
-  "network" : "regtest",
-  "testTxid" : "ebec489785f50caa9e4fa19d953c65620f8fb054bbf244e56ea9aedcabf95c90",
-  "testAddress" :"bcrt1q03lzm6tjtlng04lchtlpfk9hp93f5yrgklavtv" 
-}
