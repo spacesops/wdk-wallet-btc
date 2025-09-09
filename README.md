@@ -12,7 +12,6 @@ For detailed documentation about the complete WDK ecosystem, visit [docs.wallet.
 
 ## 🌟 Features
 
-- **BIP-39 Seed Phrase Support**: Generate and validate BIP-39 mnemonic seed phrases
 - **Bitcoin Derivation Paths**: Support for BIP-84 standard derivation paths for Bitcoin (m/84'/0')
 - **Multi-Account Management**: Create and manage multiple accounts from a single seed phrase
 - **Transaction Management**: Create, sign, and broadcast Bitcoin transactions
