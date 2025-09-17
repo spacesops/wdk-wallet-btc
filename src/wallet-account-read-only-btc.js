@@ -199,7 +199,10 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     }
 
     const addr = String(fromAddress).toLowerCase()
-    const isP2WPKH = addr.startsWith('bc1q') || addr.startsWith('tb1q')
+    const isP2WPKH =
+      addr.startsWith('bc1q') ||
+      addr.startsWith('tb1q') || 
+      addr.startsWith('bcrt1q') 
     const inputVBytes = isP2WPKH ? 68 : 148
 
     const perInputFee = Math.ceil(inputVBytes * feeRate)
