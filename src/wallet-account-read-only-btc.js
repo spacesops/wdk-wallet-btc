@@ -47,6 +47,13 @@ import ElectrumClient from './electrum-client.js'
  * @property {44 | 84} [bip] - The bip address type; available values: 44 or 84 (default: 44).
 */
 
+/**
+ * @typedef {Object} BtcMaxSpendableResult
+ * @property {bigint} amount - The maximum spendable amount in satoshis.
+ * @property {bigint} fee - The estimated network fee in satoshis.
+ * @property {bigint} changeValue - The estimated change value in satoshis.
+ */
+
 const { Output } = DescriptorsFactory(ecc)
 
 const MIN_TX_FEE_SATS = 141
@@ -172,6 +179,63 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     const transaction = Transaction.fromHex(hex)
 
     return transaction
+  }
+
+  /**
+   * Returns the maximum spendable amount (in satoshis) that can be sent,
+   * after subtracting estimated transaction fees.
+   *
+   * @returns {Promise<BtcMaxSpendableResult>} The maximum spendable result.
+   */
+  async getMaxSpendable () {
+    const fromAddress = await this.getAddress()
+    const feeRateRaw = await this._electrumClient.blockchainEstimatefee(1)
+    const feeRate = Math.max(Number(feeRateRaw) * 100_000, 1)
+
+    const scriptHash = await this._getScriptHash()
+    const unspent = await this._electrumClient.blockchainScripthash_listunspent(scriptHash)
+    if (!unspent || unspent.length === 0) {
+      return { amount: 0n, fee: 0n, changeValue: 0n }
+    }
+
+    const addr = String(fromAddress).toLowerCase()
+    const isP2WPKH = addr.startsWith('bc1q') || addr.startsWith('tb1q')
+    const inputVBytes = isP2WPKH ? 68 : 148
+
+    const perInputFee = Math.ceil(inputVBytes * feeRate)
+    const spendableUtxos = unspent.filter(u => (u.value - perInputFee) > 0)
+    if (spendableUtxos.length === 0) {
+      return { amount: 0n, fee: 0n, changeValue: 0n }
+    }
+
+    const totalInputValueSats = spendableUtxos.reduce((sum, u) => sum + u.value, 0)
+    const inputCount = spendableUtxos.length
+    const txOverheadVBytes = 11
+    const outputVBytes = 34
+
+    const twoOutputsVSize = txOverheadVBytes + (inputCount * inputVBytes) + (2 * outputVBytes)
+    const twoOutputsFeeSats = Math.max(Math.ceil(twoOutputsVSize * feeRate), MIN_TX_FEE_SATS)
+    const twoOutputsRecipientAmountSats = totalInputValueSats - twoOutputsFeeSats - DUST_LIMIT
+    if (twoOutputsRecipientAmountSats > DUST_LIMIT) {
+      return {
+        amount: BigInt(twoOutputsRecipientAmountSats),
+        fee: BigInt(twoOutputsFeeSats),
+        changeValue: BigInt(DUST_LIMIT)
+      }
+    }
+
+    const oneOutputVSize = txOverheadVBytes + (inputCount * inputVBytes) + outputVBytes
+    const oneOutputFeeSats = Math.max(Math.ceil(oneOutputVSize * feeRate), MIN_TX_FEE_SATS)
+    const oneOutputRecipientAmountSats = totalInputValueSats - oneOutputFeeSats
+    if (oneOutputRecipientAmountSats <= DUST_LIMIT) {
+      return { amount: 0n, fee: 0n, changeValue: 0n }
+    }
+
+    return {
+      amount: BigInt(oneOutputRecipientAmountSats),
+      fee: BigInt(oneOutputFeeSats),
+      changeValue: 0n
+    }
   }
 
   /**
