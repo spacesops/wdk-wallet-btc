@@ -57,6 +57,7 @@ import ElectrumClient from './electrum-client.js'
 const { Output } = DescriptorsFactory(ecc)
 
 const MIN_TX_FEE_SATS = 141
+const MAX_UTXO_INPUTS = 200
 
 /** @internal */
 export const DUST_LIMIT = 546
@@ -185,6 +186,11 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
    * Returns the maximum spendable amount (in satoshis) that can be sent,
    * after subtracting estimated transaction fees.
    *
+   * The maximum spendable amount can differ from the wallet's total balance.
+   * A transaction can only include up to MAX_UTXO_INPUTS (default: 200) unspents.
+   * Wallets holding more than this limit cannot spend their full balance in a
+   * single transaction.
+   *
    * @returns {Promise<BtcMaxSpendableResult>} The maximum spendable result.
    */
   async getMaxSpendable () {
@@ -201,14 +207,20 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     const addr = String(fromAddress).toLowerCase()
     const isP2WPKH =
       addr.startsWith('bc1q') ||
-      addr.startsWith('tb1q') || 
-      addr.startsWith('bcrt1q') 
+      addr.startsWith('tb1q') ||
+      addr.startsWith('bcrt1q')
     const inputVBytes = isP2WPKH ? 68 : 148
 
     const perInputFee = Math.ceil(inputVBytes * feeRate)
-    const spendableUtxos = unspent.filter(u => (u.value - perInputFee) > 0)
+    let spendableUtxos = unspent.filter(u => (u.value - perInputFee) > 0)
     if (spendableUtxos.length === 0) {
       return { amount: 0n, fee: 0n, changeValue: 0n }
+    }
+
+    if (spendableUtxos.length > MAX_UTXO_INPUTS) {
+      spendableUtxos = spendableUtxos
+        .sort((a, b) => b.value - a.value)
+        .slice(0, MAX_UTXO_INPUTS)
     }
 
     const totalInputValueSats = spendableUtxos.reduce((sum, u) => sum + u.value, 0)
@@ -306,6 +318,10 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
 
     if (!result) {
       throw new Error('Insufficient balance to send the transaction.')
+    }
+
+    if (result.utxos.length > MAX_UTXO_INPUTS) {
+      throw new Error('Exceeded maximum allowed inputs for transaction.')
     }
 
     const fee = Number.isFinite(result.fee)
