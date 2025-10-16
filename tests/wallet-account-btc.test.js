@@ -206,6 +206,24 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
       expect(fee).toBe(BigInt(feeSats))
     })
 
+    test('should successfully send a transaction with confirmation target', async () => {
+      const TRANSACTION = { to: recipient, value: 1_000, confirmationTarget: 5 }
+
+      const { hash, fee } = await account.sendTransaction(TRANSACTION)
+
+      await waiter.mine()
+
+      const transaction = bitcoin.getTransaction(hash)
+      expect(transaction.txid).toBe(hash)
+      expect(transaction.details[0].address).toBe(TRANSACTION.to)
+
+      const amount = Math.round(transaction.details[0].amount * 1e+8)
+      expect(amount).toBe(TRANSACTION.value)
+
+      const feeSats = bitcoin.getTransactionFeeSats(hash)
+      expect(fee).toBe(BigInt(feeSats))
+    })
+
     test('should successfully send a transaction with a fixed fee rate', async () => {
       const TRANSACTION = { to: recipient, value: 1_000, feeRate: 10 }
 

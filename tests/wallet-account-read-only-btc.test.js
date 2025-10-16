@@ -158,12 +158,21 @@ describe.each([44, 84])('WalletAccountReadOnlyBtc', (bip) => {
       expect(fee).toBe(expectedFee)
     })
   
-      test('should successfully quote a transaction with a fixed fee rate (bigint)', async () => {
+    test('should successfully quote a transaction with a fixed fee rate (bigint)', async () => {
       const TRANSACTION = { to: recipient, value: 1000, feeRate: 10n }
 
       const { fee } = await account.quoteSendTransaction(TRANSACTION)
       
       const expectedFee = FEES[bip] * TRANSACTION.feeRate
+      expect(fee).toBe(expectedFee)
+    })
+    
+    test('should successfully quote a transaction with confirmation target', async () => {
+      const TRANSACTION = { to: recipient, value: 1000, cofnirmationTarget: 5 }
+
+      const { fee } = await account.quoteSendTransaction(TRANSACTION)
+      const satsPerVByte = bitcoin.estimateSatsPerVByte(5)
+      const expectedFee = FEES[bip] * BigInt(satsPerVByte)
       expect(fee).toBe(expectedFee)
     })
   })
