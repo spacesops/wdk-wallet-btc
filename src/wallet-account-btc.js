@@ -13,7 +13,7 @@
 // limitations under the License.
 'use strict'
 
-import { crypto, initEccLib, payments, Psbt } from 'bitcoinjs-lib'
+import { crypto, initEccLib, payments, Psbt, script } from 'bitcoinjs-lib'
 import { BIP32Factory } from 'bip32'
 import BigNumber from 'bignumber.js'
 
@@ -197,6 +197,55 @@ export default class WalletAccountBtc {
    */
   async getAddress () {
     return this._address
+  }
+
+  /**
+   * Creates an OP_RETURN script for embedding data in transactions.
+   *
+   * OP_RETURN outputs are provably unspendable and can store up to 80 bytes of data.
+   * They must have value 0.
+   *
+   * @param {string | Buffer | Uint8Array} data - The data to embed (max 80 bytes for standardness).
+   * @returns {Buffer} The compiled OP_RETURN script.
+   */
+  createOpReturnScript (data) {
+    if (typeof data === 'string') {
+      data = Buffer.from(data, 'utf8')
+    } else if (!Buffer.isBuffer(data)) {
+      data = Buffer.from(data)
+    }
+    
+    if (data.length > 80) {
+      throw new Error('OP_RETURN data cannot exceed 80 bytes for standard transactions')
+    }
+    
+    // OP_RETURN (0x6a) followed by data push
+    // For data <= 75 bytes, use OP_PUSHBYTES_<n> (0x01-0x4b)
+    // For larger data, use OP_PUSHDATA1/2/4
+    const parts = []
+    parts.push(Buffer.from([0x6a])) // OP_RETURN
+    
+    if (data.length <= 75) {
+      parts.push(Buffer.from([data.length])) // OP_PUSHBYTES_<n>
+    } else if (data.length <= 0xff) {
+      const lenBuf = Buffer.allocUnsafe(2)
+      lenBuf.writeUInt8(0x4c, 0) // OP_PUSHDATA1
+      lenBuf.writeUInt8(data.length, 1)
+      parts.push(lenBuf)
+    } else if (data.length <= 0xffff) {
+      const lenBuf = Buffer.allocUnsafe(3)
+      lenBuf.writeUInt8(0x4d, 0) // OP_PUSHDATA2
+      lenBuf.writeUInt16LE(data.length, 1)
+      parts.push(lenBuf)
+    } else {
+      const lenBuf = Buffer.allocUnsafe(5)
+      lenBuf.writeUInt8(0x4e, 0) // OP_PUSHDATA4
+      lenBuf.writeUInt32LE(data.length, 1)
+      parts.push(lenBuf)
+    }
+    
+    parts.push(data)
+    return Buffer.concat(parts)
   }
 
   /**
@@ -439,16 +488,21 @@ export default class WalletAccountBtc {
   }
 
   /** @private */
-  async _getTransaction ({ recipient, amount }) {
+  async _getTransaction ({ recipient, amount, feeRate: customFeeRate, additionalOutputs = [] }) {
     const address = await this.getAddress()
-    const utxoSet = await this._getUtxos(amount, address)
-    let feeRate = await this._electrumClient.getFeeEstimateInSatsPerVb()
+    // Calculate total output amount including additional outputs
+    const additionalOutputsTotal = additionalOutputs.reduce((sum, out) => sum.plus(out.value || 0), new BigNumber(0))
+    const totalOutputAmount = new BigNumber(amount).plus(additionalOutputsTotal)
+    const utxoSet = await this._getUtxos(totalOutputAmount.toNumber(), address)
+    let feeRate = customFeeRate
+      ? new BigNumber(customFeeRate)
+      : await this._electrumClient.getFeeEstimateInSatsPerVb()
 
     if (feeRate.lt(1)) {
       feeRate = new BigNumber(1)
     }
 
-    const transaction = await this._getRawTransaction(utxoSet, amount, recipient, feeRate)
+    const transaction = await this._getRawTransaction(utxoSet, amount, recipient, feeRate, additionalOutputs)
 
     return transaction
   }
@@ -480,7 +534,7 @@ export default class WalletAccountBtc {
   }
 
   /** @private */
-  async _getRawTransaction (utxoSet, amount, recipient, feeRate) {
+  async _getRawTransaction (utxoSet, amount, recipient, feeRate, additionalOutputs = []) {
     if (+amount <= DUST_LIMIT) throw new Error(`The amount must be bigger than the dust limit (= ${DUST_LIMIT}).`)
     const totalInput = utxoSet.reduce((sum, utxo) => sum.plus(utxo.value), new BigNumber(0))
 
@@ -490,40 +544,91 @@ export default class WalletAccountBtc {
         // For Taproot (P2TR) inputs, use tapInternalKey and tapBip32Derivation
         // instead of bip32Derivation. The signInputHD method will automatically
         // use Schnorr signatures for Taproot inputs.
-        // For Taproot inputs, we need tapInternalKey and tapBip32Derivation
+        // For Taproot inputs, we need tapInternalKey
         // witnessUtxo is still needed for SegWit outputs (including Taproot)
+        // Note: We're omitting tapBip32Derivation to work around a validation bug in bitcoinjs-lib v6.1.7
+        // We'll sign manually using signTaprootInput with a custom signer
         const inputData = {
           hash: utxo.tx_hash,
           index: utxo.tx_pos,
-          witnessUtxo: { script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'), value: utxo.value },
-          tapInternalKey: this._internalPubkey,
-          tapBip32Derivation: [{
-            masterFingerprint: this._masterNode.fingerprint, // Already a Buffer
+          witnessUtxo: { 
+            script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'), 
+            value: utxo.value 
+          },
+          tapInternalKey: this._internalPubkey
+          // tapBip32Derivation omitted due to validation bug - we'll sign manually
+        }
+        psbt.addInput(inputData)
+        // Workaround: Directly modify PSBT internal data to bypass validation bug
+        // This is non-standard but works around the validation issue in bitcoinjs-lib v6.1.7
+        // We access the internal data structure and add tapBip32Derivation directly
+        const inputIndex = psbt.inputCount - 1
+        const input = psbt.data.inputs[inputIndex]
+        if (input) {
+          input.tapBip32Derivation = [{
+            masterFingerprint: this._masterNode.fingerprint,
             path: this._path,
-            pubkey: this._account.publicKey, // Already a Buffer (compressed public key)
+            pubkey: Buffer.from(this._internalPubkey), // Use internal pubkey (32 bytes) to match signer's publicKey
             leafHashes: [] // Empty array for key path spends (BIP86 Taproot)
           }]
         }
-        psbt.addInput(inputData)
       })
+      // Add primary recipient output
       psbt.addOutput({ address: recipient, value: amount })
-      const change = totalInput.minus(amount).minus(fee)
+      // Add any additional outputs (can be regular address outputs or OP_RETURN outputs)
+      const additionalOutputsTotal = additionalOutputs.reduce((sum, out) => {
+        if (out.script) {
+          // OP_RETURN output: use script directly, value should be 0
+          if (out.value !== undefined && out.value !== 0) {
+            throw new Error('OP_RETURN outputs must have value 0')
+          }
+          psbt.addOutput({ script: out.script, value: 0 })
+          return sum // OP_RETURN outputs don't count toward total output value
+        } else if (out.address) {
+          // Regular address output
+          if (out.value <= DUST_LIMIT) {
+            throw new Error(`Additional output amount ${out.value} is below dust limit (= ${DUST_LIMIT})`)
+          }
+          psbt.addOutput({ address: out.address, value: out.value })
+          return sum.plus(out.value)
+        } else {
+          throw new Error('Additional output must have either "address" or "script" property')
+        }
+      }, new BigNumber(0))
+      // Calculate change (total input - primary amount - additional outputs - fee)
+      const change = totalInput.minus(amount).minus(additionalOutputsTotal).minus(fee)
       if (change.isGreaterThan(DUST_LIMIT)) psbt.addOutput({ address: await this.getAddress(), value: change.toNumber() })
       else if (change.isLessThan(0)) throw new Error('Insufficient balance to send the transaction.')
       // For Taproot inputs, use signTaprootInput which handles Schnorr signatures (BIP-340)
       // signInputHD doesn't support Taproot, so we use the Taproot-specific signing method
-      // We need to use a BIP32 node that matches the derivation path in tapBip32Derivation
-      // The node must implement signSchnorr for Taproot signing
-      const accountPath = this._path.replace(/^m\//, '')
-      const accountNode = this._masterNode.derivePath(accountPath)
-      // Add signSchnorr method to the BIP32 node for Taproot signing
-      accountNode.signSchnorr = (hash) => {
-        return ecc.signSchnorr(hash, this._account.privateKey)
+      // For Taproot key path spends, we need to tweak the private key for signing
+      // Get the tweaked output key from the address (p2tr payment)
+      const { output } = payments.p2tr({
+        internalPubkey: this._internalPubkey,
+        network: this._electrumClient.network
+      })
+      // Calculate tapTweak hash (BIP-341): HashTapTweak(internal_pubkey || merkle_root)
+      // For key path spends, merkle_root is empty (32 zero bytes)
+      const tapTweakHash = crypto.taggedHash('TapTweak', Buffer.concat([Buffer.from(this._internalPubkey), Buffer.alloc(32)]))
+      // Tweak the private key: tweaked_privkey = internal_privkey + tapTweakHash
+      const tweakedPrivKey = ecc.privateAdd(this._account.privateKey, tapTweakHash)
+      if (!tweakedPrivKey) {
+        throw new Error('Failed to tweak private key')
+      }
+      // Extract the x-coordinate from the output script (last 32 bytes of P2TR output)
+      const tweakedOutputPubkey = output.slice(2, 34) // Skip OP_1 (0x51) and 32-byte pubkey
+      const taprootSigner = {
+        publicKey: tweakedOutputPubkey, // Tweaked output public key (32-byte x-coordinate)
+        network: this._electrumClient.network,
+        signSchnorr: (hash) => {
+          // Sign with Schnorr signature using the tweaked private key
+          return ecc.signSchnorr(hash, tweakedPrivKey)
+        }
       }
       utxoSet.forEach((_, index) => {
         // signTaprootInput automatically uses Schnorr signatures for Taproot key path spends
         // For key path spends (BIP-86), tapLeafHashToSign is undefined (defaults to key path)
-        psbt.signTaprootInput(index, accountNode)
+        psbt.signTaprootInput(index, taprootSigner)
       })
       psbt.finalizeAllInputs()
       return psbt
