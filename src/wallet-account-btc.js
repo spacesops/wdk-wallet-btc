@@ -61,9 +61,32 @@ import ElectrumClient from './electrum-client.js'
  * @property {string} [recipient] - The receiving address for outgoing transfers.
  */
 
-const BIP_86_BTC_DERIVATION_PATH_PREFIX = "m/86'/0'"
-
 const DUST_LIMIT = 546
+
+/**
+ * Gets the coin type for BIP-86 derivation path based on the network.
+ * According to BIP-44:
+ * - Bitcoin mainnet: coin type 0
+ * - Bitcoin testnet: coin type 1
+ * - Regtest: coin type 1 (same as testnet)
+ *
+ * @param {string} network - The network name ('bitcoin', 'testnet', or 'regtest').
+ * @returns {number} The coin type (0 for mainnet, 1 for testnet/regtest).
+ */
+function getCoinType (network) {
+  return network === 'bitcoin' ? 0 : 1
+}
+
+/**
+ * Gets the BIP-86 derivation path prefix based on the network.
+ *
+ * @param {string} network - The network name ('bitcoin', 'testnet', or 'regtest').
+ * @returns {string} The derivation path prefix (e.g., "m/86'/0'" for mainnet, "m/86'/1'" for testnet).
+ */
+function getBip86DerivationPathPrefix (network) {
+  const coinType = getCoinType(network)
+  return `m/86'/${coinType}'`
+}
 
 const MASTER_SECRET = Buffer.from('Bitcoin seed', 'utf8')
 
@@ -126,10 +149,14 @@ export default class WalletAccountBtc {
     }
 
     /** @private */
-    this._path = `${BIP_86_BTC_DERIVATION_PATH_PREFIX}/${path}`
+    this._electrumClient = new ElectrumClient(config)
+
+    // Get the network from config (defaults to 'bitcoin' in ElectrumClient)
+    const network = config?.network || 'bitcoin'
+    const derivationPathPrefix = getBip86DerivationPathPrefix(network)
 
     /** @private */
-    this._electrumClient = new ElectrumClient(config)
+    this._path = `${derivationPathPrefix}/${path}`
 
     const { masterNode, account } = derivePath(seed, this._path)
 

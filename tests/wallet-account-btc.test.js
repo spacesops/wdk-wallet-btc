@@ -16,9 +16,10 @@ const SEED = mnemonicToSeedSync(SEED_PHRASE)
 // Note: The address is a Taproot address (Bech32m format starting with bcrt1p)
 // The keyPair remains the same as BIP-84 since we're using the same seed and derivation path
 // but generating a Taproot address instead of P2WPKH
+// For regtest, the coin type is 1 (same as testnet), so the path is m/86'/1'/0'/0/0
 const ACCOUNT = {
   index: 0,
-  path: "m/86'/0'/0'/0/0", // BIP-86 derivation path for Taproot
+  path: "m/86'/1'/0'/0/0", // BIP-86 derivation path for Taproot (regtest uses coin type 1)
   address: null, // Will be set dynamically to the actual Taproot address
   keyPair: {
     privateKey: '433c8e1e0064cdafe991f1efb4803d7dfcc2533db7d5cfa963ed53917b720248',
@@ -361,9 +362,27 @@ describe('WalletAccountBtc', () => {
     test('should use BIP-86 derivation path for Taproot addresses', () => {
       const testAccount = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", CONFIGURATION)
 
-      expect(testAccount.path).toMatch(/^m\/86'\/0'\/0'\/0\/0$/)
+      // Regtest uses coin type 1 (same as testnet)
+      expect(testAccount.path).toMatch(/^m\/86'\/1'\/0'\/0\/0$/)
 
       testAccount.dispose()
+    })
+
+    test('should use correct coin type for different networks', () => {
+      // Test mainnet
+      const mainnetAccount = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", { network: 'bitcoin' })
+      expect(mainnetAccount.path).toMatch(/^m\/86'\/0'\/0'\/0\/0$/)
+      mainnetAccount.dispose()
+
+      // Test testnet
+      const testnetAccount = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", { network: 'testnet' })
+      expect(testnetAccount.path).toMatch(/^m\/86'\/1'\/0'\/0\/0$/)
+      testnetAccount.dispose()
+
+      // Test regtest
+      const regtestAccount = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", { network: 'regtest' })
+      expect(regtestAccount.path).toMatch(/^m\/86'\/1'\/0'\/0\/0$/)
+      regtestAccount.dispose()
     })
 
     test('should generate Taproot addresses with correct Bech32m format', async () => {

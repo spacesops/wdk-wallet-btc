@@ -49,7 +49,7 @@ export default class WalletManagerBtc extends WalletManager {
    * Returns the wallet account at a specific index (see [BIP-86](https://bips.xyz/86)).
    *
    * @example
-   * // Returns the account with derivation path m/86'/0'/0'/0/1
+   * // Returns the account with derivation path m/86'/0'/0'/0/1 (mainnet) or m/86'/1'/0'/0/1 (testnet)
    * const account = await wallet.getAccount(1);
    * @param {number} [index] - The index of the account to get (default: 0).
    * @returns {Promise<WalletAccountBtc>} The account.
@@ -62,7 +62,7 @@ export default class WalletManagerBtc extends WalletManager {
    * Returns the wallet account at a specific [BIP-86](https://bips.xyz/86) derivation path.
    *
    * @example
-   * // Returns the account with derivation path m/86'/0'/0'/0/1
+   * // Returns the account with derivation path m/86'/0'/0'/0/1 (mainnet) or m/86'/1'/0'/0/1 (testnet)
    * const account = await wallet.getAccountByPath("0'/0/1");
    * @param {string} path - The derivation path (e.g. "0'/0/0").
    * @returns {Promise<WalletAccountBtc>} The account.
