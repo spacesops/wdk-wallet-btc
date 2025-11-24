@@ -4,7 +4,7 @@ export default class WalletAccountBtc implements IWalletAccount {
      * Creates a new bitcoin wallet account.
      *
      * @param {string | Uint8Array} seed - The wallet's [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki) seed phrase.
-     * @param {string} path - The BIP-84 derivation path (e.g. "0'/0/0").
+     * @param {string} path - The BIP-86 derivation path (e.g. "0'/0/0") for Taproot addresses.
      * @param {BtcWalletConfig} [config] - The configuration object.
      */
     constructor(seed: string | Uint8Array, path: string, config?: BtcWalletConfig);
@@ -23,7 +23,7 @@ export default class WalletAccountBtc implements IWalletAccount {
      */
     get index(): number;
     /**
-     * The derivation path of this account (see [BIP-84](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki)).
+     * The derivation path of this account (see [BIP-86](https://bips.xyz/86) for Taproot).
      *
      * @type {string}
      */
@@ -35,16 +35,22 @@ export default class WalletAccountBtc implements IWalletAccount {
      */
     get keyPair(): KeyPair;
     /**
-     * Returns the account's address.
+     * Returns the account's Taproot address (Bech32m format).
+     * 
+     * Address formats:
+     * - Mainnet: bc1p... (Bech32m)
+     * - Testnet: tb1p... (Bech32m)
+     * - Regtest: bcrt1p... (Bech32m)
      *
-     * @returns {Promise<string>} The account's address.
+     * @returns {Promise<string>} The account's Taproot address.
      */
     getAddress(): Promise<string>;
     /**
-     * Signs a message.
+     * Signs a message using ECDSA signatures.
+     * Note: Transaction signing uses Schnorr signatures (BIP-340) for Taproot transactions.
      *
      * @param {string} message - The message to sign.
-     * @returns {Promise<string>} The message's signature.
+     * @returns {Promise<string>} The message's signature (hex encoded).
      */
     sign(message: string): Promise<string>;
     /**
@@ -69,7 +75,8 @@ export default class WalletAccountBtc implements IWalletAccount {
      */
     getTokenBalance(tokenAddress: string): Promise<number>;
     /**
-     * Sends a transaction.
+     * Sends a transaction from this Taproot address.
+     * Transactions are signed using Schnorr signatures (BIP-340) for Taproot inputs.
      *
      * @param {BtcTransaction} tx - The transaction.
      * @returns {Promise<TransactionResult>} The transaction's result.
@@ -100,6 +107,7 @@ export default class WalletAccountBtc implements IWalletAccount {
     quoteTransfer(options: TransferOptions): Promise<Omit<TransferResult, "hash">>;
     /**
     * Returns the bitcoin transfers history of the account.
+    * Only parses Taproot (P2TR) transaction outputs. Non-Taproot outputs are skipped.
     *
      * @param {Object} [options] - The options.
      * @param {"incoming" | "outgoing" | "all"} [options.direction] - If set, only returns transfers with the given direction (default: "all").

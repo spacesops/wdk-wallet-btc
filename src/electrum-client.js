@@ -21,6 +21,11 @@ import BigNumber from 'bignumber.js'
 /** @internal */
 export default class ElectrumClient {
   constructor (config = {}) {
+    // Network objects from bitcoinjs-lib support Taproot addresses:
+    // - Mainnet: bc1p... (Bech32m for Taproot)
+    // - Testnet: tb1p... (Bech32m for Taproot)
+    // - Regtest: bcrt1p... (Bech32m for Taproot)
+    // Note: Only Taproot (P2TR) addresses are supported
     this._network = networks[config.network || 'bitcoin']
 
     if (!this._network) {

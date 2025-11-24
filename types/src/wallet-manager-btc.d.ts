@@ -16,20 +16,20 @@ export default class WalletManagerBtc {
     /** @private */
     private _accounts;
     /**
-     * Returns the wallet account at a specific index (see [BIP-84](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki)).
+     * Returns the wallet account at a specific index (see [BIP-86](https://bips.xyz/86) for Taproot).
      *
      * @example
-     * // Returns the account with derivation path m/84'/0'/0'/0/1
+     * // Returns the account with derivation path m/86'/0'/0'/0/1
      * const account = await wallet.getAccount(1);
      * @param {number} [index] - The index of the account to get (default: 0).
      * @returns {Promise<WalletAccountBtc>} The account.
      */
     getAccount(index?: number): Promise<WalletAccountBtc>;
     /**
-     * Returns the wallet account at a specific [BIP-84](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki) derivation path.
+     * Returns the wallet account at a specific [BIP-86](https://bips.xyz/86) derivation path for Taproot.
      *
      * @example
-     * // Returns the account with derivation path m/84'/0'/0'/0/1
+     * // Returns the account with derivation path m/86'/0'/0'/0/1
      * const account = await wallet.getAccountByPath("0'/0/1");
      * @param {string} path - The derivation path (e.g. "0'/0/0").
      * @returns {Promise<WalletAccountBtc>} The account.

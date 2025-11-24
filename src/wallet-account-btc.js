@@ -61,12 +61,19 @@ import ElectrumClient from './electrum-client.js'
  * @property {string} [recipient] - The receiving address for outgoing transfers.
  */
 
-const BIP_84_BTC_DERIVATION_PATH_PREFIX = "m/84'/0'"
+const BIP_86_BTC_DERIVATION_PATH_PREFIX = "m/86'/0'"
 
 const DUST_LIMIT = 546
 
 const MASTER_SECRET = Buffer.from('Bitcoin seed', 'utf8')
 
+// Network constants for BIP32 key derivation
+// Note: This is only used for BIP32 derivation, not for address encoding.
+// Address encoding (including Taproot/Bech32m) uses network objects from bitcoinjs-lib
+// which are obtained via ElectrumClient and support Taproot addresses:
+// - Mainnet: bc1p... (Bech32m for Taproot)
+// - Testnet: tb1p... (Bech32m for Taproot)
+// - Regtest: bcrt1p... (Bech32m for Taproot)
 const BITCOIN = {
   wif: 0x80,
   bip32: {
@@ -106,7 +113,7 @@ export default class WalletAccountBtc {
    * Creates a new bitcoin wallet account.
    *
    * @param {string | Uint8Array} seed - The wallet's [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki) seed phrase.
-   * @param {string} path - The BIP-84 derivation path (e.g. "0'/0/0").
+   * @param {string} path - The BIP-86 derivation path (e.g. "0'/0/0").
    * @param {BtcWalletConfig} [config] - The configuration object.
    */
   constructor (seed, path, config) {
@@ -119,7 +126,7 @@ export default class WalletAccountBtc {
     }
 
     /** @private */
-    this._path = `${BIP_84_BTC_DERIVATION_PATH_PREFIX}/${path}`
+    this._path = `${BIP_86_BTC_DERIVATION_PATH_PREFIX}/${path}`
 
     /** @private */
     this._electrumClient = new ElectrumClient(config)
@@ -132,8 +139,15 @@ export default class WalletAccountBtc {
     /** @private */
     this._account = account
 
-    const { address } = payments.p2wpkh({
-      pubkey: this._account.publicKey,
+    // For BIP-86 single-key Taproot, use the internal public key (32-byte x-coordinate)
+    // The publicKey from BIP32 is compressed (33 bytes), so we extract the 32-byte x-coordinate
+    const internalPubkey = this._account.publicKey.slice(1)
+    
+    /** @private */
+    this._internalPubkey = internalPubkey
+    
+    const { address } = payments.p2tr({
+      internalPubkey: internalPubkey,
       network: this._electrumClient.network
     })
 
@@ -151,7 +165,7 @@ export default class WalletAccountBtc {
   }
 
   /**
-   * The derivation path of this account (see [BIP-84](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki)).
+   * The derivation path of this account (see [BIP-86](https://bips.xyz/86)).
    *
    * @type {string}
    */
@@ -172,19 +186,27 @@ export default class WalletAccountBtc {
   }
 
   /**
-   * Returns the account's address.
+   * Returns the account's Taproot address (Bech32m format).
    *
-   * @returns {Promise<string>} The account's address.
+   * Address formats:
+   * - Mainnet: bc1p... (Bech32m)
+   * - Testnet: tb1p... (Bech32m)
+   * - Regtest: bcrt1p... (Bech32m)
+   *
+   * @returns {Promise<string>} The account's Taproot address.
    */
   async getAddress () {
     return this._address
   }
 
   /**
-   * Signs a message.
+   * Signs a message using ECDSA signatures.
+   *
+   * Note: This method uses ECDSA for message signing. Transaction signing
+   * uses Schnorr signatures (BIP-340) for Taproot transactions.
    *
    * @param {string} message - The message to sign.
-   * @returns {Promise<string>} The message's signature.
+   * @returns {Promise<string>} The message's signature (hex encoded).
    */
   async sign (message) {
     const messageHash = crypto.sha256(Buffer.from(message, 'utf8'))
@@ -228,7 +250,10 @@ export default class WalletAccountBtc {
   }
 
   /**
-   * Sends a transaction.
+   * Sends a transaction from this Taproot address.
+   *
+   * Transactions are signed using Schnorr signatures (BIP-340) for Taproot inputs.
+   * Taproot transactions typically have lower fees due to smaller witness sizes.
    *
    * @param {BtcTransaction} tx - The transaction.
    * @returns {Promise<TransactionResult>} The transaction's result.
@@ -283,6 +308,8 @@ export default class WalletAccountBtc {
   /**
   * Returns the bitcoin transfers history of the account.
   *
+  * Only parses Taproot (P2TR) transaction outputs. Non-Taproot outputs are skipped.
+  *
    * @param {Object} [options] - The options.
    * @param {"incoming" | "outgoing" | "all"} [options.direction] - If set, only returns transfers with the given direction (default: "all").
    * @param {number} [options.limit] - The number of transfers to return (default: 10).
@@ -293,6 +320,23 @@ export default class WalletAccountBtc {
     const { direction = 'all', limit = 10, skip = 0 } = options
     const address = await this.getAddress()
     const history = await this._electrumClient.getHistory(address)
+
+    // Helper function to decode script as P2TR (Taproot)
+    // Returns the address if successful, null otherwise
+    // Only supports Taproot addresses (P2TR) - P2WPKH is not supported
+    const decodeScriptAddress = (script) => {
+      if (!script) return null
+      try {
+        const p2tr = payments.p2tr({
+          output: script,
+          network: this._electrumClient.network
+        })
+        if (p2tr.address) return p2tr.address
+      } catch (_) {
+        // Not a Taproot script
+      }
+      return null
+    }
 
     const isAddressMatch = (scriptPubKey, addr) => {
       if (!scriptPubKey) return false
@@ -327,11 +371,8 @@ export default class WalletAccountBtc {
           const prevId = Buffer.from(input.hash).reverse().toString('hex')
           const prevTx = await this._electrumClient.getTransaction(prevId)
           const script = prevTx.outs[input.index].script
-          const addr = payments.p2wpkh({
-            output: script,
-            network: this._electrumClient.network
-          }).address
-          if (isAddressMatch({ address: addr }, address)) return true
+          const addr = decodeScriptAddress(script)
+          if (addr && addr === address) return true
         } catch (_) {}
       }
       return false
@@ -351,13 +392,12 @@ export default class WalletAccountBtc {
 
       for (const [index, out] of tx.outs.entries()) {
         const hex = out.script.toString('hex')
-        const addr = payments.p2wpkh({
-          output: out.script,
-          network: this._electrumClient.network
-        }).address
+        // Decode script as P2TR (Taproot) - only Taproot addresses are supported
+        const addr = decodeScriptAddress(out.script)
+        if (!addr) continue // Skip outputs that are not Taproot (P2TR) addresses
         const spk = { hex, address: addr }
         const recipient = extractAddress(spk)
-        const isToSelf = isAddressMatch(spk, address)
+        const isToSelf = addr === address
 
         let directionType = null
         if (isToSelf && !outgoing) directionType = 'incoming'
@@ -454,14 +494,18 @@ export default class WalletAccountBtc {
     const createPsbt = async (fee) => {
       const psbt = new Psbt({ network: this._electrumClient.network })
       utxoSet.forEach((utxo, index) => {
+        // For Taproot (P2TR) inputs, use tapInternalKey and tapBip32Derivation
+        // instead of bip32Derivation. The signInputHD method will automatically
+        // use Schnorr signatures for Taproot inputs.
         psbt.addInput({
           hash: utxo.tx_hash,
           index: utxo.tx_pos,
           witnessUtxo: { script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'), value: utxo.value },
-          bip32Derivation: [{
+          tapInternalKey: this._internalPubkey,
+          tapBip32Derivation: [{
             masterFingerprint: this._masterNode.fingerprint,
             path: this._path,
-            pubkey: this._account.publicKey
+            pubkey: this._internalPubkey
           }]
         })
       })
@@ -469,11 +513,16 @@ export default class WalletAccountBtc {
       const change = totalInput.minus(amount).minus(fee)
       if (change.isGreaterThan(DUST_LIMIT)) psbt.addOutput({ address: await this.getAddress(), value: change.toNumber() })
       else if (change.isLessThan(0)) throw new Error('Insufficient balance to send the transaction.')
+      // signInputHD automatically detects Taproot inputs (via tapInternalKey/tapBip32Derivation)
+      // and uses Schnorr signatures (BIP-340) instead of ECDSA for Taproot transactions
       utxoSet.forEach((_, index) => psbt.signInputHD(index, this._masterNode))
       psbt.finalizeAllInputs()
       return psbt
     }
 
+    // Create a dummy transaction to estimate fee
+    // virtualSize() automatically accounts for Taproot's different witness sizes
+    // Taproot inputs have smaller witnesses (~57 bytes) compared to P2WPKH (~107 bytes)
     let psbt = await createPsbt(0)
     const dummyTx = psbt.extractTransaction()
     let estimatedFee = new BigNumber(feeRate).multipliedBy(dummyTx.virtualSize()).integerValue(BigNumber.ROUND_CEIL)
