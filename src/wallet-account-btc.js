@@ -142,12 +142,12 @@ export default class WalletAccountBtc {
     // For BIP-86 single-key Taproot, use the internal public key (32-byte x-coordinate)
     // The publicKey from BIP32 is compressed (33 bytes), so we extract the 32-byte x-coordinate
     const internalPubkey = this._account.publicKey.slice(1)
-    
+
     /** @private */
     this._internalPubkey = internalPubkey
-    
+
     const { address } = payments.p2tr({
-      internalPubkey: internalPubkey,
+      internalPubkey,
       network: this._electrumClient.network
     })
 
@@ -338,13 +338,6 @@ export default class WalletAccountBtc {
       return null
     }
 
-    const isAddressMatch = (scriptPubKey, addr) => {
-      if (!scriptPubKey) return false
-      if (scriptPubKey.address) return scriptPubKey.address === addr
-      if (Array.isArray(scriptPubKey.addresses)) return scriptPubKey.addresses.includes(addr)
-      return false
-    }
-
     const extractAddress = (scriptPubKey) => {
       if (!scriptPubKey) return null
       if (scriptPubKey.address) return scriptPubKey.address
@@ -497,25 +490,41 @@ export default class WalletAccountBtc {
         // For Taproot (P2TR) inputs, use tapInternalKey and tapBip32Derivation
         // instead of bip32Derivation. The signInputHD method will automatically
         // use Schnorr signatures for Taproot inputs.
-        psbt.addInput({
+        // For Taproot inputs, we need tapInternalKey and tapBip32Derivation
+        // witnessUtxo is still needed for SegWit outputs (including Taproot)
+        const inputData = {
           hash: utxo.tx_hash,
           index: utxo.tx_pos,
           witnessUtxo: { script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'), value: utxo.value },
           tapInternalKey: this._internalPubkey,
           tapBip32Derivation: [{
-            masterFingerprint: this._masterNode.fingerprint,
+            masterFingerprint: this._masterNode.fingerprint, // Already a Buffer
             path: this._path,
-            pubkey: this._internalPubkey
+            pubkey: this._account.publicKey, // Already a Buffer (compressed public key)
+            leafHashes: [] // Empty array for key path spends (BIP86 Taproot)
           }]
-        })
+        }
+        psbt.addInput(inputData)
       })
       psbt.addOutput({ address: recipient, value: amount })
       const change = totalInput.minus(amount).minus(fee)
       if (change.isGreaterThan(DUST_LIMIT)) psbt.addOutput({ address: await this.getAddress(), value: change.toNumber() })
       else if (change.isLessThan(0)) throw new Error('Insufficient balance to send the transaction.')
-      // signInputHD automatically detects Taproot inputs (via tapInternalKey/tapBip32Derivation)
-      // and uses Schnorr signatures (BIP-340) instead of ECDSA for Taproot transactions
-      utxoSet.forEach((_, index) => psbt.signInputHD(index, this._masterNode))
+      // For Taproot inputs, use signTaprootInput which handles Schnorr signatures (BIP-340)
+      // signInputHD doesn't support Taproot, so we use the Taproot-specific signing method
+      // We need to use a BIP32 node that matches the derivation path in tapBip32Derivation
+      // The node must implement signSchnorr for Taproot signing
+      const accountPath = this._path.replace(/^m\//, '')
+      const accountNode = this._masterNode.derivePath(accountPath)
+      // Add signSchnorr method to the BIP32 node for Taproot signing
+      accountNode.signSchnorr = (hash) => {
+        return ecc.signSchnorr(hash, this._account.privateKey)
+      }
+      utxoSet.forEach((_, index) => {
+        // signTaprootInput automatically uses Schnorr signatures for Taproot key path spends
+        // For key path spends (BIP-86), tapLeafHashToSign is undefined (defaults to key path)
+        psbt.signTaprootInput(index, accountNode)
+      })
       psbt.finalizeAllInputs()
       return psbt
     }

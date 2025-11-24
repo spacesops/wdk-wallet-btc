@@ -16,7 +16,7 @@ export default class WalletManagerBtc {
     /** @private */
     private _accounts;
     /**
-     * Returns the wallet account at a specific index (see [BIP-86](https://bips.xyz/86) for Taproot).
+     * Returns the wallet account at a specific index (see [BIP-86](https://bips.xyz/86)).
      *
      * @example
      * // Returns the account with derivation path m/86'/0'/0'/0/1
@@ -26,7 +26,7 @@ export default class WalletManagerBtc {
      */
     getAccount(index?: number): Promise<WalletAccountBtc>;
     /**
-     * Returns the wallet account at a specific [BIP-86](https://bips.xyz/86) derivation path for Taproot.
+     * Returns the wallet account at a specific [BIP-86](https://bips.xyz/86) derivation path.
      *
      * @example
      * // Returns the account with derivation path m/86'/0'/0'/0/1
@@ -46,6 +46,6 @@ export default class WalletManagerBtc {
      */
     dispose(): void;
 }
-export type FeeRates = import("@wdk/wallet").FeeRates;
+export type FeeRates = any;
 export type BtcWalletConfig = import("./wallet-account-btc.js").BtcWalletConfig;
 import WalletAccountBtc from './wallet-account-btc.js';

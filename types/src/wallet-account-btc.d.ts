@@ -4,7 +4,7 @@ export default class WalletAccountBtc implements IWalletAccount {
      * Creates a new bitcoin wallet account.
      *
      * @param {string | Uint8Array} seed - The wallet's [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki) seed phrase.
-     * @param {string} path - The BIP-86 derivation path (e.g. "0'/0/0") for Taproot addresses.
+     * @param {string} path - The BIP-86 derivation path (e.g. "0'/0/0").
      * @param {BtcWalletConfig} [config] - The configuration object.
      */
     constructor(seed: string | Uint8Array, path: string, config?: BtcWalletConfig);
@@ -13,7 +13,11 @@ export default class WalletAccountBtc implements IWalletAccount {
     /** @private */
     private _electrumClient;
     /** @private */
+    private _masterNode;
+    /** @private */
     private _account;
+    /** @private */
+    private _internalPubkey;
     /** @private */
     private _address;
     /**
@@ -23,7 +27,7 @@ export default class WalletAccountBtc implements IWalletAccount {
      */
     get index(): number;
     /**
-     * The derivation path of this account (see [BIP-86](https://bips.xyz/86) for Taproot).
+     * The derivation path of this account (see [BIP-86](https://bips.xyz/86)).
      *
      * @type {string}
      */
@@ -36,7 +40,7 @@ export default class WalletAccountBtc implements IWalletAccount {
     get keyPair(): KeyPair;
     /**
      * Returns the account's Taproot address (Bech32m format).
-     * 
+     *
      * Address formats:
      * - Mainnet: bc1p... (Bech32m)
      * - Testnet: tb1p... (Bech32m)
@@ -47,7 +51,9 @@ export default class WalletAccountBtc implements IWalletAccount {
     getAddress(): Promise<string>;
     /**
      * Signs a message using ECDSA signatures.
-     * Note: Transaction signing uses Schnorr signatures (BIP-340) for Taproot transactions.
+     *
+     * Note: This method uses ECDSA for message signing. Transaction signing
+     * uses Schnorr signatures (BIP-340) for Taproot transactions.
      *
      * @param {string} message - The message to sign.
      * @returns {Promise<string>} The message's signature (hex encoded).
@@ -76,7 +82,9 @@ export default class WalletAccountBtc implements IWalletAccount {
     getTokenBalance(tokenAddress: string): Promise<number>;
     /**
      * Sends a transaction from this Taproot address.
+     *
      * Transactions are signed using Schnorr signatures (BIP-340) for Taproot inputs.
+     * Taproot transactions typically have lower fees due to smaller witness sizes.
      *
      * @param {BtcTransaction} tx - The transaction.
      * @returns {Promise<TransactionResult>} The transaction's result.
@@ -107,6 +115,7 @@ export default class WalletAccountBtc implements IWalletAccount {
     quoteTransfer(options: TransferOptions): Promise<Omit<TransferResult, "hash">>;
     /**
     * Returns the bitcoin transfers history of the account.
+    *
     * Only parses Taproot (P2TR) transaction outputs. Non-Taproot outputs are skipped.
     *
      * @param {Object} [options] - The options.
@@ -121,15 +130,15 @@ export default class WalletAccountBtc implements IWalletAccount {
         skip?: number;
     }): Promise<BtcTransfer[]>;
     /**
+    * Returns a read-only copy of the account.
+    *
+    * @returns {Promise<never>} The read-only account.
+    */
+    toReadOnlyAccount(): Promise<never>;
+    /**
      * Disposes the wallet account, erasing the private key from the memory and closing the connection with the electrum server.
      */
     dispose(): void;
-    /**
-     * Returns a read-only copy of the account.
-     *
-     * @returns {Promise<never>} The read-only account.
-     */
-    toReadOnlyAccount(): Promise<never>;
     /** @private */
     private _getTransaction;
     /** @private */
@@ -137,11 +146,11 @@ export default class WalletAccountBtc implements IWalletAccount {
     /** @private */
     private _getRawTransaction;
 }
-export type KeyPair = import("@wdk/wallet").KeyPair;
-export type TransactionResult = import("@wdk/wallet").TransactionResult;
-export type TransferOptions = import("@wdk/wallet").TransferOptions;
-export type TransferResult = import("@wdk/wallet").TransferResult;
-export type IWalletAccount = import("@wdk/wallet").IWalletAccount;
+export type KeyPair = any;
+export type TransactionResult = any;
+export type TransferOptions = any;
+export type TransferResult = any;
+export type IWalletAccount = any;
 export type BtcTransaction = {
     /**
      * - The transaction's recipient.
