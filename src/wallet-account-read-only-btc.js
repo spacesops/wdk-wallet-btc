@@ -36,7 +36,9 @@ import ElectrumClient from './electrum-client.js'
  * @typedef {Object} BtcTransaction
  * @property {string} to - The transaction's recipient.
  * @property {number | bigint} value - The amount of bitcoins to send to the recipient (in satoshis).
- */
+ * @property {number} [confirmationTarget] - Optional confirmation target in blocks (default: 1).
+ * @property {number | bigint} [feeRate] - Optional fee rate in satoshis per virtual byte. If provided, this value overrides the fee rate estimated from the blockchain (default: undefined).
+ * */
 
 /**
  * @typedef {Object} BtcWalletConfig
@@ -44,8 +46,11 @@ import ElectrumClient from './electrum-client.js'
  * @property {number} [port] - The electrum server's port (default: 50001).
  * @property {"bitcoin" | "regtest" | "testnet"} [network] The name of the network to use (default: "bitcoin").
  * @property {"tcp" | "tls" | "ssl"} [protocol] - The transport protocol to use (default: "tcp").
- * @property {44 | 84} [bip] - The bip address type; available values: 44 or 84 (default: 44).
-*/
+ * @property {44 | 84} [bip] - The BIP address type used for key and address derivation.
+ *   - 44: [BIP-44 (P2PKH / legacy)](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)
+ *   - 84: [BIP-84 (P2WPKH / native SegWit)](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki)
+ *   - Default: 84 (P2WPKH).
+ * */
 
 /**
  * @typedef {Object} BtcMaxSpendableResult
@@ -59,8 +64,19 @@ const { Output } = DescriptorsFactory(ecc)
 const MIN_TX_FEE_SATS = 141
 const MAX_UTXO_INPUTS = 200
 
-/** @internal */
-export const DUST_LIMIT = 546
+const BIP_BY_ADDRESS_PREFIX = {
+  1: 44,
+  m: 44,
+  n: 44,
+  bc1q: 84,
+  tb1q: 84,
+  bcrt1q: 84
+}
+
+const DUST_LIMIT = {
+  44: 546n,
+  84: 294n
+}
 
 export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
   /**
@@ -100,6 +116,17 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
       config.protocol || 'tcp',
       { retryPeriod: 1_000, maxRetry: 2, pingPeriod: 120_000, callback: null }
     )
+
+    const prefix = Object.keys(BIP_BY_ADDRESS_PREFIX).find(p => address.startsWith(p))
+    const bip = BIP_BY_ADDRESS_PREFIX[prefix] || 44
+
+    /**
+     * The dust limit in satoshis based on the BIP type.
+     *
+     * @private
+     * @type {number}
+     */
+    this._dustLimit = DUST_LIMIT[bip]
   }
 
   /**
@@ -131,16 +158,19 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
    * @param {BtcTransaction} tx - The transaction.
    * @returns {Promise<Omit<TransactionResult, 'hash'>>} The transaction's quotes.
    */
-  async quoteSendTransaction ({ to, value }) {
+  async quoteSendTransaction ({ to, value, feeRate, confirmationTarget = 1 }) {
     const address = await this.getAddress()
 
-    const feeRate = await this._electrumClient.blockchainEstimatefee(1)
+    if (!feeRate) {
+      const feeEstimate = await this._electrumClient.blockchainEstimatefee(confirmationTarget)
+      feeRate = this._toBigInt(Math.max(feeEstimate * 100_000, 1))
+    }
 
     const { fee } = await this._planSpend({
       fromAddress: address,
       toAddress: to,
       amount: value,
-      feeRate: Math.max(Number(feeRate) * 100_000, 1)
+      feeRate
     })
 
     return { fee: BigInt(fee) }
@@ -230,19 +260,19 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
 
     const twoOutputsVSize = txOverheadVBytes + (inputCount * inputVBytes) + (2 * outputVBytes)
     const twoOutputsFeeSats = Math.max(Math.ceil(twoOutputsVSize * feeRate), MIN_TX_FEE_SATS)
-    const twoOutputsRecipientAmountSats = totalInputValueSats - twoOutputsFeeSats - DUST_LIMIT
-    if (twoOutputsRecipientAmountSats > DUST_LIMIT) {
+    const twoOutputsRecipientAmountSats = totalInputValueSats - twoOutputsFeeSats - Number(this._dustLimit)
+    if (twoOutputsRecipientAmountSats > Number(this._dustLimit)) {
       return {
         amount: BigInt(twoOutputsRecipientAmountSats),
         fee: BigInt(twoOutputsFeeSats),
-        changeValue: BigInt(DUST_LIMIT)
+        changeValue: this._dustLimit
       }
     }
 
     const oneOutputVSize = txOverheadVBytes + (inputCount * inputVBytes) + outputVBytes
     const oneOutputFeeSats = Math.max(Math.ceil(oneOutputVSize * feeRate), MIN_TX_FEE_SATS)
     const oneOutputRecipientAmountSats = totalInputValueSats - oneOutputFeeSats
-    if (oneOutputRecipientAmountSats <= DUST_LIMIT) {
+    if (oneOutputRecipientAmountSats <= this._dustLimit) {
       return { amount: 0n, fee: 0n, changeValue: 0n }
     }
 
@@ -270,6 +300,9 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     return buffer.toString('hex')
   }
 
+  /** @private */
+  _toBigInt (v) { return typeof v === 'bigint' ? v : BigInt(Math.round(Number(v))) }
+
   /**
    * Builds and returns a fee-aware funding plan for sending a transaction.
    *
@@ -281,12 +314,16 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
    * @param {string} tx.fromAddress - The sender's address.
    * @param {string} tx.toAddress - The recipient's address.
    * @param {number | bigint} tx.amount - The amount to send (in satoshis).
-   * @param {number} tx.feeRate - The fee rate (in sats/vB).
+   * @param {number | bigint} tx.feeRate - The fee rate (in sats/vB).
    * @returns {Promise<{ utxos: OutputWithValue[], fee: number, changeValue: number }>} - The funding plan.
    */
   async _planSpend ({ fromAddress, toAddress, amount, feeRate }) {
-    if (amount <= DUST_LIMIT) {
-      throw new Error(`The amount must be bigger than the dust limit (= ${DUST_LIMIT}).`)
+    amount = this._toBigInt(amount)
+    feeRate = this._toBigInt(feeRate)
+    if (feeRate < 1n) feeRate = 1n
+
+    if (amount <= this._dustLimit) {
+      throw new Error(`The amount must be bigger than the dust limit (= ${this._dustLimit}).`)
     }
 
     const network = this._network
@@ -313,7 +350,7 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
       utxos: utxosForCoinSelect,
       remainder: fromAddressOutput,
       targets: [{ output: toAddressOutput, value: Number(amount) }],
-      feeRate: Math.max(Number(feeRate) || 0, 1)
+      feeRate: Number(feeRate)
     })
 
     if (!result) {
@@ -324,25 +361,29 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
       throw new Error('Exceeded maximum allowed inputs for transaction.')
     }
 
-    const fee = Number.isFinite(result.fee)
-      ? Math.max(result.fee, MIN_TX_FEE_SATS)
-      : MIN_TX_FEE_SATS
+    const fee = this._toBigInt(Math.max(result.fee ?? 0, MIN_TX_FEE_SATS))
 
     const utxos = result.utxos.map(({ __ref }) => ({
       ...__ref,
-      vout: { value: __ref.value, scriptPubKey: { hex: fromAddressScriptHex } }
+      vout: {
+        value: this._toBigInt(__ref.value),
+        scriptPubKey: { hex: fromAddressScriptHex }
+      }
     }))
 
-    const total = utxos.reduce((s, u) => s + u.value, 0)
+    const total = utxos.reduce((s, u) => s + this._toBigInt(u.value), 0n)
+    const changeValue = total - fee - amount
 
-    const changeValue = total - fee - Number(amount)
-
-    if (changeValue < 0) {
+    if (changeValue < 0n) {
       throw new Error('Insufficient balance after fees.')
     }
 
-    if (changeValue <= DUST_LIMIT) {
-      return { utxos, fee: fee + changeValue, changeValue: 0 }
+    if (changeValue <= this._dustLimit) {
+      return {
+        utxos,
+        fee: fee + changeValue,
+        changeValue: 0n
+      }
     }
 
     return { utxos, fee, changeValue }
