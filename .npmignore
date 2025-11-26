@@ -1,0 +1,7 @@
+node_modules
+coverage
+tests
+tsconfig.json
+.github
+db
+.bitcoin
