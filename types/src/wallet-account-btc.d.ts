@@ -9,9 +9,9 @@ export default class WalletAccountBtc implements IWalletAccount {
      */
     constructor(seed: string | Uint8Array, path: string, config?: BtcWalletConfig);
     /** @private */
-    private _path;
-    /** @private */
     private _electrumClient;
+    /** @private */
+    private _path;
     /** @private */
     private _masterNode;
     /** @private */
@@ -49,6 +49,16 @@ export default class WalletAccountBtc implements IWalletAccount {
      * @returns {Promise<string>} The account's Taproot address.
      */
     getAddress(): Promise<string>;
+    /**
+     * Creates an OP_RETURN script for embedding data in transactions.
+     *
+     * OP_RETURN outputs are provably unspendable and can store up to 80 bytes of data.
+     * They must have value 0.
+     *
+     * @param {string | Buffer | Uint8Array} data - The data to embed (max 80 bytes for standardness).
+     * @returns {Buffer} The compiled OP_RETURN script.
+     */
+    createOpReturnScript(data: string | Buffer | Uint8Array): Buffer;
     /**
      * Signs a message using ECDSA signatures.
      *

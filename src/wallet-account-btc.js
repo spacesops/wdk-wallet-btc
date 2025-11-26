@@ -13,7 +13,7 @@
 // limitations under the License.
 'use strict'
 
-import { crypto, initEccLib, payments, Psbt, script } from 'bitcoinjs-lib'
+import { crypto, initEccLib, payments, Psbt } from 'bitcoinjs-lib'
 import { BIP32Factory } from 'bip32'
 import BigNumber from 'bignumber.js'
 
@@ -241,17 +241,17 @@ export default class WalletAccountBtc {
     } else if (!Buffer.isBuffer(data)) {
       data = Buffer.from(data)
     }
-    
+
     if (data.length > 80) {
       throw new Error('OP_RETURN data cannot exceed 80 bytes for standard transactions')
     }
-    
+
     // OP_RETURN (0x6a) followed by data push
     // For data <= 75 bytes, use OP_PUSHBYTES_<n> (0x01-0x4b)
     // For larger data, use OP_PUSHDATA1/2/4
     const parts = []
     parts.push(Buffer.from([0x6a])) // OP_RETURN
-    
+
     if (data.length <= 75) {
       parts.push(Buffer.from([data.length])) // OP_PUSHBYTES_<n>
     } else if (data.length <= 0xff) {
@@ -270,7 +270,7 @@ export default class WalletAccountBtc {
       lenBuf.writeUInt32LE(data.length, 1)
       parts.push(lenBuf)
     }
-    
+
     parts.push(data)
     return Buffer.concat(parts)
   }
@@ -578,9 +578,9 @@ export default class WalletAccountBtc {
         const inputData = {
           hash: utxo.tx_hash,
           index: utxo.tx_pos,
-          witnessUtxo: { 
-            script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'), 
-            value: utxo.value 
+          witnessUtxo: {
+            script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'),
+            value: utxo.value
           },
           tapInternalKey: this._internalPubkey
           // tapBip32Derivation omitted due to validation bug - we'll sign manually
