@@ -114,16 +114,28 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
       }
     }
 
+    // Determine script_type: use config.script_type if provided, otherwise derive from bip
+    let scriptType = config.script_type
+    if (scriptType === undefined) {
+      if (bip === 86) {
+        scriptType = 'P2TR'
+      } else if (bip === 44) {
+        scriptType = 'P2PKH' // Legacy, though not explicitly used in config
+      } else {
+        scriptType = 'P2WPKH' // Default for bip 84
+      }
+    }
+
     // Validate bip value
     if (![44, 84, 86].includes(bip)) {
       throw new Error('Invalid bip specification. Supported bips: 44, 84, 86.')
     }
 
     // Validate correlation between bip and script_type
-    if (bip === 86 && config.script_type !== undefined && config.script_type !== 'P2TR') {
+    if (bip === 86 && scriptType !== 'P2TR') {
       throw new Error('BIP 86 requires script_type to be "P2TR".')
     }
-    if (config.script_type === 'P2TR' && bip !== 86) {
+    if (scriptType === 'P2TR' && bip !== 86) {
       throw new Error('script_type "P2TR" requires bip to be 86.')
     }
 
@@ -134,9 +146,25 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
 
     const network = networks[config.network] || networks.bitcoin
 
-    const { address } = bip === 44
-      ? payments.p2pkh({ pubkey: account.publicKey, network })
-      : payments.p2wpkh({ pubkey: account.publicKey, network })
+    // Generate address based on script_type
+    let address
+    if (scriptType === 'P2TR') {
+      // P2TR (Taproot) address generation
+      // For BIP-86, the internal key is the BIP32 derived public key (without prefix)
+      const { address: p2trAddress } = payments.p2tr({
+        internalPubkey: account.publicKey.slice(1), // Remove 0x02/0x03 prefix
+        network
+      })
+      address = p2trAddress
+    } else if (bip === 44) {
+      // P2PKH (Legacy) address generation
+      const { address: p2pkhAddress } = payments.p2pkh({ pubkey: account.publicKey, network })
+      address = p2pkhAddress
+    } else {
+      // P2WPKH (Native SegWit) address generation - default for bip 84
+      const { address: p2wpkhAddress } = payments.p2wpkh({ pubkey: account.publicKey, network })
+      address = p2wpkhAddress
+    }
 
     super(address, config)
 
@@ -153,6 +181,9 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
 
     /** @private */
     this._bip = bip
+
+    /** @private */
+    this._scriptType = scriptType
 
     /** @private */
     this._masterNode = masterNode
