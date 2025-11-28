@@ -485,29 +485,53 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
       const psbt = new Psbt({ network: this._network })
 
       for (const utxo of utxos) {
-        const baseInput = {
-          hash: utxo.tx_hash,
-          index: utxo.tx_pos,
-          bip32Derivation: [{
-            masterFingerprint: this._masterNode.fingerprint,
-            path: this._path,
-            pubkey: this._account.publicKey
-          }]
-        }
-
-        if (this._bip === 84) {
+        if (this._scriptType === 'P2TR') {
+          // P2TR (Taproot) input creation
+          // For BIP-86, the internal key is the BIP32 derived public key (without prefix)
+          const internalPubkey = this._account.publicKey.slice(1) // Remove 0x02/0x03 prefix
+          
           psbt.addInput({
-            ...baseInput,
+            hash: utxo.tx_hash,
+            index: utxo.tx_pos,
             witnessUtxo: {
               script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'),
               value: Number(utxo.value)
-            }
+            },
+            tapInternalKey: internalPubkey,
+            tapBip32Derivation: [{
+              masterFingerprint: this._masterNode.fingerprint,
+              path: this._path,
+              leafHashes: [],
+              pubkey: internalPubkey
+            }]
+          })
+        } else if (this._bip === 84) {
+          // P2WPKH (Native SegWit) input creation
+          psbt.addInput({
+            hash: utxo.tx_hash,
+            index: utxo.tx_pos,
+            witnessUtxo: {
+              script: Buffer.from(utxo.vout.scriptPubKey.hex, 'hex'),
+              value: Number(utxo.value)
+            },
+            bip32Derivation: [{
+              masterFingerprint: this._masterNode.fingerprint,
+              path: this._path,
+              pubkey: this._account.publicKey
+            }]
           })
         } else {
+          // P2PKH (Legacy) input creation
           const prevHex = await getPrevTxHex(utxo.tx_hash)
           psbt.addInput({
-            ...baseInput,
-            nonWitnessUtxo: Buffer.from(prevHex, 'hex')
+            hash: utxo.tx_hash,
+            index: utxo.tx_pos,
+            nonWitnessUtxo: Buffer.from(prevHex, 'hex'),
+            bip32Derivation: [{
+              masterFingerprint: this._masterNode.fingerprint,
+              path: this._path,
+              pubkey: this._account.publicKey
+            }]
           })
         }
       }
@@ -515,7 +539,11 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
       psbt.addOutput({ address: to, value: Number(rcptVal) })
       if (chgVal > 0n) psbt.addOutput({ address: await this.getAddress(), value: Number(chgVal) })
 
+      // Sign all inputs
+      // signInputHD automatically detects Taproot inputs and uses Schnorr signatures (BIP-340)
+      // For P2WPKH and P2PKH, it uses standard ECDSA signatures
       utxos.forEach((_, index) => psbt.signInputHD(index, this._masterNode))
+      
       psbt.finalizeAllInputs()
 
       return psbt.extractTransaction()
