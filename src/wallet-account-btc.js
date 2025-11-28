@@ -676,27 +676,50 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
       if (chgVal > 0n) psbt.addOutput({ address: await this.getAddress(), value: Number(chgVal) })
 
       // Sign all inputs
-      // For P2TR (Taproot), we need to manually sign because signInputHD requires bip32Derivation
-      // which conflicts with tapBip32Derivation. We use signInput with the account's private key.
-      // bitcoinjs-lib handles Taproot key tweaking and Schnorr signature generation internally.
+      // For P2TR (Taproot), we need to manually sign with a Schnorr signer
+      // because signInputHD requires bip32Derivation which conflicts with tapBip32Derivation
       // For P2WPKH (BIP-84) and P2PKH (BIP-44), use signInputHD
       for (let index = 0; index < utxos.length; index++) {
         if (this._scriptType === 'P2TR') {
-          // Taproot signing: Use signInput with a keypair
+          // Taproot signing: Create a Schnorr signer function
           // For BIP-86, the internal key is the BIP32 public key's x-coordinate (32 bytes)
-          // The private key is the BIP32 private key (32 bytes, no prefix)
-          // bitcoinjs-lib handles Taproot key tweaking and Schnorr signature generation
-          // PSBT uses tapInternalKey and tapBip32Derivation to determine signing method
+          // We need to calculate the Taproot tweak and create a tweaked private key
+          // This matches the tweak calculation used by payments.p2tr() for address generation
           const internalPubkey = this._account.publicKey.slice(1) // Remove 0x02/0x03 prefix to get x-coordinate
+          const internalPrivkey = this._account.privateKey // 32-byte private key
           
-          // Create keypair for Taproot signing
-          // Private key is already 32 bytes (BIP32 format), no prefix to remove
-          const keyPair = {
-            publicKey: internalPubkey, // 32-byte x-coordinate
-            privateKey: this._account.privateKey // 32-byte private key
+          // Calculate Taproot tweak: H_TapTweak(internalPubkey || 0x00) for BIP-86 single-key spends
+          // Per BIP-341: tweak = H_TapTweak(internalPubkey || scriptTreeHash)
+          // For BIP-86 (single-key spends), scriptTreeHash is 0x00
+          // TapTweak uses tagged hash (BIP-340): SHA256(SHA256(tag) || SHA256(tag) || msg)
+          // Tag: "TapTweak" (UTF-8 encoded)
+          const tapTweakTag = Buffer.from('TapTweak', 'utf8')
+          const tagHash = crypto.sha256(tapTweakTag) // SHA256(tag)
+          const tapTweakMsg = Buffer.concat([
+            tagHash, // First SHA256(tag)
+            tagHash, // Second SHA256(tag) (repeated per BIP-340 spec)
+            internalPubkey, // 32-byte x-coordinate of internal public key
+            Buffer.from([0x00]) // 0x00 for single-key spends (no script path in BIP-86)
+          ])
+          const tweakHash = crypto.sha256(tapTweakMsg) // Final tagged hash
+          
+          // Apply tweak to private key: tweakedPrivkey = internalPrivkey + tweakHash (mod n)
+          // This ensures the tweaked private key corresponds to the tweaked public key
+          // used in the Taproot address (which payments.p2tr() calculates)
+          const tweakedPrivkey = ecc.privateAdd(internalPrivkey, tweakHash)
+          
+          // Create Schnorr signer function for Taproot
+          // PSBT will call signSchnorr with the message hash to be signed
+          // The signer must return a 64-byte Schnorr signature (BIP-340)
+          const schnorrSigner = {
+            signSchnorr: (hash) => {
+              // Sign the hash with the tweaked private key using Schnorr signature (BIP-340)
+              // Returns 64-byte signature: r (32 bytes) || s (32 bytes)
+              return ecc.signSchnorr(hash, tweakedPrivkey)
+            }
           }
           
-          psbt.signInput(index, keyPair)
+          psbt.signInput(index, schnorrSigner)
         } else {
           // P2WPKH and P2PKH use standard ECDSA signatures with HD derivation
           psbt.signInputHD(index, this._masterNode)
