@@ -53,6 +53,9 @@ import WalletAccountReadOnlyBtc from './wallet-account-read-only-btc.js'
 
 const MASTER_SECRET = Buffer.from('Bitcoin seed', 'utf8')
 
+// BITCOIN constant used for BIP32 key derivation only
+// Address encoding (Bech32 for P2WPKH, Bech32m for P2TR) is handled by bitcoinjs-lib network objects
+// Network objects support Taproot: mainnet (bc1p), testnet (tb1p), regtest (bcrt1p)
 const BITCOIN = {
   wif: 0x80,
   bip32: { public: 0x0488b21e, private: 0x0488ade4 },
