@@ -703,10 +703,21 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
           network: this._network
         })
         // Calculate tapTweak hash (BIP-341): HashTapTweak(internal_pubkey || merkle_root)
-        // For key path spends, merkle_root is empty (32 zero bytes)
-        const tapTweakHash = crypto.taggedHash('TapTweak', Buffer.concat([Buffer.from(this._internalPubkey), Buffer.alloc(32)]))
+        // For BIP-86 key path spends, merkle_root is 0x00 (single byte, not 32 bytes)
+        // TapTweak uses tagged hash (BIP-340): SHA256(SHA256(tag) || SHA256(tag) || msg)
+        const tapTweakTag = Buffer.from('TapTweak', 'utf8')
+        const tagHash = crypto.sha256(tapTweakTag) // SHA256(tag)
+        const tapTweakMsg = Buffer.concat([
+          tagHash, // First SHA256(tag)
+          tagHash, // Second SHA256(tag) (repeated per BIP-340 spec)
+          Buffer.from(this._internalPubkey), // 32-byte internal pubkey
+          Buffer.from([0x00]) // 0x00 for single-key spends (BIP-86)
+        ])
+        const tapTweakHash = crypto.sha256(tapTweakMsg) // Final tagged hash
         // Tweak the private key: tweaked_privkey = internal_privkey + tapTweakHash
-        const tweakedPrivKey = ecc.privateAdd(this._account.privateKey, tapTweakHash)
+        // Ensure private key is a Buffer (not BigInt)
+        const internalPrivKey = Buffer.from(this._account.privateKey)
+        const tweakedPrivKey = Buffer.from(ecc.privateAdd(internalPrivKey, tapTweakHash))
         if (!tweakedPrivKey) {
           throw new Error('Failed to tweak private key')
         }
@@ -721,9 +732,9 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
           }
         }
         utxos.forEach((_, index) => {
-          // signTaprootInput automatically uses Schnorr signatures for Taproot key path spends
-          // For key path spends (BIP-86), tapLeafHashToSign is undefined (defaults to key path)
-          psbt.signTaprootInput(index, taprootSigner)
+          // Use signInput for Taproot - it will detect Taproot inputs and use signSchnorr
+          // signTaprootInput may not exist in bitcoinjs-lib v6.1.7, so use signInput instead
+          psbt.signInput(index, taprootSigner)
         })
       } else {
         // P2WPKH and P2PKH use standard ECDSA signatures with HD derivation
