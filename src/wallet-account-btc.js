@@ -15,7 +15,7 @@
 
 import { hmac } from '@noble/hashes/hmac'
 import { sha512 } from '@noble/hashes/sha512'
-import { address as btcAddress, initEccLib, networks, payments, Psbt, Transaction } from 'bitcoinjs-lib'
+import { address as btcAddress, crypto, initEccLib, networks, payments, Psbt, Transaction } from 'bitcoinjs-lib'
 import { BIP32Factory } from 'bip32'
 import pLimit from 'p-limit'
 import { LRUCache } from 'lru-cache'
@@ -676,9 +676,32 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
       if (chgVal > 0n) psbt.addOutput({ address: await this.getAddress(), value: Number(chgVal) })
 
       // Sign all inputs
-      // signInputHD automatically detects Taproot inputs (P2TR/BIP-86) and uses Schnorr signatures (BIP-340)
-      // For P2WPKH (BIP-84) and P2PKH (BIP-44), it uses standard ECDSA signatures
-      utxos.forEach((_, index) => psbt.signInputHD(index, this._masterNode))
+      // For P2TR (Taproot), we need to manually sign because signInputHD requires bip32Derivation
+      // which conflicts with tapBip32Derivation. We use signInput with the account's private key.
+      // bitcoinjs-lib handles Taproot key tweaking and Schnorr signature generation internally.
+      // For P2WPKH (BIP-84) and P2PKH (BIP-44), use signInputHD
+      for (let index = 0; index < utxos.length; index++) {
+        if (this._scriptType === 'P2TR') {
+          // Taproot signing: Use signInput with a keypair
+          // For BIP-86, the internal key is the BIP32 public key's x-coordinate (32 bytes)
+          // The private key is the BIP32 private key (32 bytes, no prefix)
+          // bitcoinjs-lib handles Taproot key tweaking and Schnorr signature generation
+          // PSBT uses tapInternalKey and tapBip32Derivation to determine signing method
+          const internalPubkey = this._account.publicKey.slice(1) // Remove 0x02/0x03 prefix to get x-coordinate
+          
+          // Create keypair for Taproot signing
+          // Private key is already 32 bytes (BIP32 format), no prefix to remove
+          const keyPair = {
+            publicKey: internalPubkey, // 32-byte x-coordinate
+            privateKey: this._account.privateKey // 32-byte private key
+          }
+          
+          psbt.signInput(index, keyPair)
+        } else {
+          // P2WPKH and P2PKH use standard ECDSA signatures with HD derivation
+          psbt.signInputHD(index, this._masterNode)
+        }
+      }
       
       psbt.finalizeAllInputs()
 
