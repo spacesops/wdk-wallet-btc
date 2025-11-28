@@ -104,10 +104,27 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
       seed = bip39.mnemonicToSeedSync(seed)
     }
 
-    const bip = config.bip ?? 84
+    // Determine bip value: use config.bip if provided, otherwise derive from script_type
+    let bip = config.bip
+    if (bip === undefined) {
+      if (config.script_type === 'P2TR') {
+        bip = 86
+      } else {
+        bip = 84 // Default to 84 (P2WPKH)
+      }
+    }
 
-    if (![44, 84].includes(bip)) {
-      throw new Error('Invalid bip specification. Supported bips: 44, 84.')
+    // Validate bip value
+    if (![44, 84, 86].includes(bip)) {
+      throw new Error('Invalid bip specification. Supported bips: 44, 84, 86.')
+    }
+
+    // Validate correlation between bip and script_type
+    if (bip === 86 && config.script_type !== undefined && config.script_type !== 'P2TR') {
+      throw new Error('BIP 86 requires script_type to be "P2TR".')
+    }
+    if (config.script_type === 'P2TR' && bip !== 86) {
+      throw new Error('script_type "P2TR" requires bip to be 86.')
     }
 
     const netdp = config.network === 'bitcoin' ? 0 : 1
