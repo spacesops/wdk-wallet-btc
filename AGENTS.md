@@ -43,6 +43,7 @@ Source code must be strictly typed using JSDoc comments to support the `build:ty
 - `types/`: Generated type definitions (do not edit manually).
 
 ## Repository Specifics
+- **npm package:** `@spacesops/wdk-wallet-btc` (fork; upstream is `@tetherto/wdk-wallet-btc` on GitHub).
 - **Domain:** Bitcoin Wallet Management.
 - **Key Libraries:** `bitcoinjs-lib`, `@mempool/electrum-client`, `bip32`.
 - **Standards:** BIP-84 (Native SegWit m/84'/0').
