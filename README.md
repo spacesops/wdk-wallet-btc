@@ -1,4 +1,4 @@
-# @tetherto/wdk-wallet-btc
+# @spacesops/wdk-wallet-btc
 
 **Note**: This package is currently in beta. Please test thoroughly in development environments before using in production.
 
@@ -20,22 +20,22 @@ For detailed documentation about the complete WDK ecosystem, visit [docs.wallet.
 
 ## ⬇️ Installation
 
-To install the `@tetherto/wdk-wallet-btc` package, follow these instructions:
+To install the `@spacesops/wdk-wallet-btc` package, follow these instructions:
 
 You can install it using npm:
 
 ```bash
-npm install @tetherto/wdk-wallet-btc
+npm install @spacesops/wdk-wallet-btc
 ```
 
 ## 🚀 Quick Start
 
-### Importing from `@tetherto/wdk-wallet-btc`
+### Importing from `@spacesops/wdk-wallet-btc`
 
 ### Creating a New Wallet
 
 ```javascript
-import WalletManagerBtc from '@tetherto/wdk-wallet-btc'
+import WalletManagerBtc from '@spacesops/wdk-wallet-btc'
 
 // Use a BIP-39 seed phrase (replace with your own secure phrase)
 const seedPhrase = 'test only example nut use this real life secret phrase must random'
@@ -59,7 +59,7 @@ const wallet = new WalletManagerBtc(seedPhrase, {
 // })
 
 // Pre-built client instance
-// import { ElectrumTcp, BlockbookClient } from '@tetherto/wdk-wallet-btc'
+// import { ElectrumTcp, BlockbookClient } from '@spacesops/wdk-wallet-btc'
 // const client = new ElectrumTcp({ host: '...', port: 50001 })
 // const wallet = new WalletManagerBtc(seedPhrase, { client })
 
@@ -91,7 +91,7 @@ While the package defaults to `electrum.blockstream.info` if no host is specifie
 ### Managing Multiple Accounts
 
 ```javascript
-import WalletManagerBtc from '@tetherto/wdk-wallet-btc'
+import WalletManagerBtc from '@spacesops/wdk-wallet-btc'
 
 // Assume wallet is already created
 // Get the first account (index 0)
@@ -121,7 +121,7 @@ console.log('Custom account address:', customAddress)
 #### Account Balance
 
 ```javascript
-import WalletManagerBtc from '@tetherto/wdk-wallet-btc'
+import WalletManagerBtc from '@spacesops/wdk-wallet-btc'
 
 // Assume wallet and account are already created
 // Get confirmed balance (returns confirmed balance only)
