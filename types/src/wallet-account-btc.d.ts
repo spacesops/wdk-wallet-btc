@@ -1,4 +1,4 @@
-/** @implements {IWalletAccount} */
+/** @implements {IWalletAccount<string>} */
 export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implements IWalletAccount<string> {
     /**
      * Creates a new bitcoin wallet account.
@@ -30,7 +30,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
     get path(): string;
     /**
      * The account's key pair.
-     * 
+     *
      * The uint8 arrays are bound to the wallet account, so any external change will reflect to the internal representation. For this reason,
      * it's strongly recommended to treat the key pair as a read-only view of the keys. While it's still technically possible to alter their
      * content, client code should never do so.
@@ -96,16 +96,22 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      * @returns {Promise<WalletAccountReadOnlyBtc>} The read-only account.
      */
     toReadOnlyAccount(): Promise<WalletAccountReadOnlyBtc>;
+    _btcReadOnlyAccount: WalletAccountReadOnlyBtc;
     /**
-     * Disposes the wallet account, erasing the private key from memory and closing the connection with the server.
+     * Computes the fee of a signed raw transaction by resolving the value of each
+     * spent input from the blockchain and subtracting the total output value.
+     *
+     * @private
+     * @param {Transaction} transaction - The decoded signed transaction.
+     * @returns {Promise<bigint>} The fee (in satoshis).
      */
-    dispose(): void;
-    /** @private */
     private _getSignedTransactionFee;
     /** @private */
     private _getRawTransaction;
+    /** @private */
+    private _buildSignedTransaction;
 }
-export type IWalletAccount<TSignedTransaction> = import("@tetherto/wdk-wallet").IWalletAccount<TSignedTransaction>;
+export type IWalletAccount = import("@tetherto/wdk-wallet").IWalletAccount;
 export type KeyPair = import("@tetherto/wdk-wallet").KeyPair;
 export type TransactionResult = import("@tetherto/wdk-wallet").TransactionResult;
 export type TransferOptions = import("@tetherto/wdk-wallet").TransferOptions;
