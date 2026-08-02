@@ -47,6 +47,15 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      */
     get scriptType(): string;
     /**
+     * spaces-wallet-taproot-key-material
+     * Export Taproot internal pubkey + private + tweaked private key as hex.
+     */
+    getTaprootKeyMaterialHex(): {
+        internalPubKeyHex: string;
+        privateKeyHex: string;
+        tweakedPrivateKeyHex: string;
+    };
+    /**
      * Signs a message.
      * For P2WPKH (BIP-84) and P2TR (BIP-86), uses SegWit message signing format.
      * P2TR transactions use Schnorr signatures (BIP-340), but message signing format remains compatible.
@@ -55,14 +64,6 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      * @returns {Promise<string>} The message's signature.
      */
     sign(message: string): Promise<string>;
-    /**
-     * Verifies a message's signature.
-     *
-     * @param {string} message - The original message.
-     * @param {string} signature - The signature to verify.
-     * @returns {Promise<boolean>} True if the signature is valid.
-     */
-    verify(message: string, signature: string): Promise<boolean>;
     /**
      * Sends a transaction.
      *
@@ -128,22 +129,35 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
         confirmationTarget?: number;
     }): Promise<string>;
     /**
-     * Quotes an update transaction with hex data and returns the raw hexadecimal string without broadcasting it.
-     * Creates a transaction that:
-     * 1. Sends value to the recipient address
-     * 2. Embeds hex-encoded data in an OP_RETURN output
-     * 3. Spends from a prior transaction UTXO (requires priorAcct for signing)
-     * 4. Returns change to the main account
+     * Creates an OP_RETURN script from hex-encoded data.
+     * Similar to createOpReturnScript but accepts hex data instead of UTF-8 string.
+     *
+     * @param {string} hexData - The hex-encoded data to embed.
+     * @returns {Buffer} The OP_RETURN script as a Buffer.
+     */
+    createOpReturnScriptFromHex(hexData: string): Buffer;
+    /**
+     * Quotes a transaction that updates a prior transaction with hex data in OP_RETURN.
+     * Creates a transaction with 2 inputs:
+     * 1. A UTXO from the priorTx that has a value of 1077 sats (signed by priorAcct)
+     * 2. A UTXO from the main account to fund this transaction (signed by this account)
+     *
+     * Outputs (in order):
+     * 1. Spend 1077 sats to the "to" address param
+     * 2. An OP_RETURN output containing the hex-encoded data
+     * 3. The change returning to the main account
+     *
+     * Returns the transaction hex without broadcasting.
      *
      * @param {Object} options - Transaction options.
      * @param {string} options.to - The recipient's Bitcoin address.
      * @param {string} options.hex - The hex-encoded data string to embed in OP_RETURN.
      * @param {string} options.priorTx - The existing transaction id to reference.
      * @param {WalletAccountBtc} options.priorAcct - The account that owns the priorTx UTXO (for signing).
-     * @param {number | bigint} [options.value] - The amount to send (in satoshis, default: 1007).
+     * @param {number | bigint} [options.value] - The amount to send (in satoshis, default: 1077).
      * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB). If not provided, estimated from network.
      * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
-     * @returns Signed transaction hex and network fee (not broadcast).
+     * @returns {Promise<string>} The raw hexadecimal string of the transaction.
      */
     quoteUpdateTransactionWithHexTX({ to, hex, priorTx, priorAcct, value, feeRate, confirmationTarget }: {
         to: string;
@@ -153,18 +167,15 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
         value?: number | bigint;
         feeRate?: number | bigint;
         confirmationTarget?: number;
-    }): Promise<{
-        hex: string;
-        fee: bigint;
-    }>;
+    }): Promise<string>;
     /**
      * Sends a transaction that updates a prior transaction with hex data in OP_RETURN.
      * Creates a transaction with 2 inputs:
-     * 1. A UTXO from the priorTx that has a value of 1007 sats (signed by priorAcct)
+     * 1. A UTXO from the priorTx that has a value of 1077 sats (signed by priorAcct)
      * 2. A UTXO from the main account to fund this transaction (signed by this account)
      *
      * Outputs (in order):
-     * 1. Spend 1007 sats to the "to" address param
+     * 1. Spend 1077 sats to the "to" address param
      * 2. An OP_RETURN output containing the hex-encoded data
      * 3. The change returning to the main account
      *
@@ -175,7 +186,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      * @param {string} options.hex - The hex-encoded data string to embed in OP_RETURN.
      * @param {string} options.priorTx - The existing transaction id to reference.
      * @param {WalletAccountBtc} options.priorAcct - The account that owns the priorTx UTXO (for signing).
-     * @param {number | bigint} [options.value] - The amount to send (in satoshis, default: 1007).
+     * @param {number | bigint} [options.value] - The amount to send (in satoshis, default: 1077).
      * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB). If not provided, estimated from network.
      * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
      * @returns {Promise<TransactionResult>} The transaction result with hash and fee.
@@ -245,6 +256,26 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
      * Disposes the wallet account, erasing the private key from memory and closing the connection with the electrum server.
      */
     dispose(): void;
+    /**
+     * Builds and signs a raw transaction with inputs from multiple accounts.
+     * First input (index 0) is signed by priorAcct, second input (index 1) is signed by this account.
+     * For P2TR (Taproot) transactions, uses Schnorr signatures (BIP-340) automatically.
+     * For P2WPKH transactions, uses ECDSA signatures.
+     * Supports additional outputs including OP_RETURN scripts.
+     *
+     * @private
+     * @param {Object} options - Transaction options.
+     * @param {Array} options.utxos - The UTXOs to spend (first from priorAcct, second from this account).
+     * @param {string} options.to - The recipient's address.
+     * @param {number | bigint} options.value - The amount to send.
+     * @param {number | bigint} options.fee - The transaction fee.
+     * @param {number | bigint} options.feeRate - The fee rate.
+     * @param {number | bigint} options.changeValue - The change amount.
+     * @param {Array<Object>} [options.additionalOutputs] - Additional outputs to include.
+     * @param {WalletAccountBtc} options.priorAcct - The account to sign the first input.
+     * @returns {Promise<{txid: string, hex: string, fee: bigint, vsize: number}>} The transaction details.
+     */
+    private _buildMultiAccountTransaction;
     /**
      * Builds and signs a raw transaction.
      * For P2TR (Taproot) transactions, uses Schnorr signatures (BIP-340) automatically.

@@ -313,6 +313,43 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
   get scriptType () {
     return this._scriptType
   }
+  /**
+   * spaces-wallet-taproot-key-material
+   * Export Taproot internal pubkey + private + tweaked private key as hex.
+   */
+  getTaprootKeyMaterialHex () {
+    if (this._scriptType !== 'P2TR' || !this._account || !this._internalPubkey) {
+      return null
+    }
+    const internalPubkey = Buffer.from(this._internalPubkey)
+    const privateKeyHex = Buffer.from(this._account.privateKey).toString('hex')
+    const internalPubKeyHex = internalPubkey.toString('hex')
+    const tapTweakHashValue = tapTweakHash(internalPubkey, undefined)
+    const verifiedTweakedResult = tweakKey(internalPubkey, undefined)
+    let internalPrivKey = Buffer.from(this._account.privateKey)
+    const internalPubKeyFull = Buffer.from(this._account.publicKey)
+    const secp256k1Order = BigInt('0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141')
+    if ((internalPubKeyFull[0] & 1) === 1) {
+      const internalPrivKeyBigInt = BigInt('0x' + internalPrivKey.toString('hex'))
+      const negatedBigInt = (secp256k1Order - internalPrivKeyBigInt) % secp256k1Order
+      internalPrivKey = Buffer.from(negatedBigInt.toString(16).padStart(64, '0'), 'hex')
+    }
+    const tweakedPrivKeyDirect = Buffer.from(ecc.privateAdd(internalPrivKey, tapTweakHashValue))
+    let tweakedPrivKey
+    if (verifiedTweakedResult.parity === 1) {
+      const tweakedPrivKeyBigInt = BigInt('0x' + tweakedPrivKeyDirect.toString('hex'))
+      const negatedBigInt = (secp256k1Order - tweakedPrivKeyBigInt) % secp256k1Order
+      tweakedPrivKey = Buffer.from(negatedBigInt.toString(16).padStart(64, '0'), 'hex')
+    } else {
+      tweakedPrivKey = tweakedPrivKeyDirect
+    }
+    return {
+      internalPubKeyHex,
+      privateKeyHex,
+      tweakedPrivateKeyHex: tweakedPrivKey.toString('hex'),
+    }
+  }
+
 
   /**
    * Signs a message.

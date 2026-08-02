@@ -13,20 +13,8 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
      * @type {Omit<BtcWalletConfig, 'bip'>}
      */
     protected _config: Omit<BtcWalletConfig, "bip">;
-    /**
-     * The network.
-     *
-     * @protected
-     * @type {Network}
-     */
-    protected _network: Network;
-    /**
-     * An electrum client to interact with the bitcoin node.
-     *
-     * @protected
-     * @type {ElectrumClient}
-     */
-    protected _electrumClient: ElectrumClient;
+    _network: any;
+    _electrumClient: ElectrumClient;
     /**
      * The dust limit in satoshis based on the BIP type.
      *
@@ -34,6 +22,14 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
      * @type {number}
      */
     private _dustLimit;
+    /**
+     * P2TR/P2WPKH output script for `address` on this account's network, as lowercase hex.
+     * Taproot witness programs are OP_1 + PUSH32 (prefix 5120…).
+     *
+     * @param {string} address
+     * @returns {string}
+     */
+    getScriptPubKeyHex(address: string): string;
     /**
      * Quotes the costs of a send transaction operation.
      *
@@ -85,6 +81,7 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
      * Supports both P2WPKH (Bech32) and P2TR (Bech32m) address formats.
      *
      * @protected
+     * @param {string} [address] - If set, hash this address’s scriptPubKey (must match the account’s keys when spending).
      * @returns {Promise<string>} The reversed sha-256 script hash as a hex-encoded string.
      */
     protected _getScriptHash(address?: string): Promise<string>;

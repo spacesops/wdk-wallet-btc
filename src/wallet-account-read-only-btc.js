@@ -16,7 +16,7 @@
 
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
-import { coinselect } from '@bitcoinerlab/coinselect'
+import { addUntilReach, coinselect } from '@bitcoinerlab/coinselect'
 import { DescriptorsFactory } from '@bitcoinerlab/descriptors'
 import * as ecc from '@bitcoinerlab/secp256k1'
 
@@ -959,8 +959,7 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     // For fee estimation, we use the actual memo size + 2 bytes overhead
     const opReturnOutputSize = 1 + 1 + memoBuffer.length // OP_RETURN + push opcode + data
 
-    const coinselectInput = {
-      utxos: utxosForCoinSelect,
+    const coinselectInputBase = {
       remainder: fromAddressOutput,
       targets: [{ output: toAddressOutput, value: Number(amount) }],
       feeRate: Number(feeRate)
@@ -972,13 +971,66 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
       utxoTotalSats: utxosForCoinSelect.reduce((s, u) => s + u.value, 0),
       targetValue: Number(amount),
       feeRate: Number(feeRate),
-      fromDescriptor: fromAddressOutput.toString(),
-      toDescriptor: toAddressOutput.toString()
+      opReturnSize: opReturnOutputSize,
+      memoLength: memoBuffer.length,
+      selectionStrategy: 'addUntilReach+opReturnValidation'
     }))
 
-    const result = coinselect(coinselectInput)
+    // coinselect() runs avoidChange first, which often picks one UTXO that covers payment
+    // plus base tx fee but not the OP_RETURN output fee added below. addUntilReach allows
+    // change outputs and can combine inputs when a single UTXO is too small after memo fees.
+    let pool = [...utxosForCoinSelect]
+    let selected = null
+    let totalFee = 0n
+    let changeValue = 0n
 
-    if (!result) {
+    while (pool.length > 0 && !selected) {
+      const result = addUntilReach({ ...coinselectInputBase, utxos: pool })
+      if (!result) {
+        break
+      }
+
+      const baseFee = this._toBigInt(Math.max(result.fee ?? 0, MIN_TX_FEE_SATS))
+      const opReturnFee = this._toBigInt(opReturnOutputSize) * feeRate
+      const candidateTotalFee = baseFee + opReturnFee
+      const candidateTotal = result.utxos.reduce((s, u) => s + this._toBigInt(u.value), 0n)
+      const candidateChange = candidateTotal - candidateTotalFee - amount
+
+      if (candidateChange >= 0n) {
+        selected = result
+        if (candidateChange <= this._dustLimit) {
+          totalFee = candidateTotalFee + candidateChange
+          changeValue = 0n
+        } else {
+          totalFee = candidateTotalFee
+          changeValue = candidateChange
+        }
+        console.log('[_planSpendWithMemo] selected inputs:', {
+          utxoValues: result.utxos.map(u => u.value),
+          inputCount: result.utxos.length,
+          baseFee: baseFee.toString(),
+          opReturnFee: opReturnFee.toString(),
+          totalFee: totalFee.toString(),
+          changeValue: changeValue.toString()
+        })
+        break
+      }
+
+      console.warn('[_planSpendWithMemo] selection insufficient after OP_RETURN fee; retrying with larger inputs', {
+        picked: result.utxos.map(u => u.value),
+        candidateChange: candidateChange.toString(),
+        opReturnFee: opReturnFee.toString()
+      })
+
+      const minSelected = Math.min(...result.utxos.map(u => u.value))
+      const nextPool = pool.filter(u => u.value > minSelected)
+      if (nextPool.length === pool.length) {
+        break
+      }
+      pool = nextPool
+    }
+
+    if (!selected) {
       console.error('[_planSpendWithMemo] coinselect returned null — insufficient balance', JSON.stringify({
         utxoTotalSats: utxosForCoinSelect.reduce((s, u) => s + u.value, 0),
         targetSats: Number(amount),
@@ -991,38 +1043,17 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
       throw new Error('🚀🚀🚀 LOCAL PACKAGE ACTIVE - Insufficient balance to send the transaction. 🚀🚀🚀')
     }
 
-    if (result.utxos.length > MAX_UTXO_INPUTS) {
+    if (selected.utxos.length > MAX_UTXO_INPUTS) {
       throw new Error('Exceeded maximum allowed inputs for transaction.')
     }
 
-    // Add additional fee for OP_RETURN output
-    // OP_RETURN outputs add to the transaction size, so we need to account for this
-    const baseFee = this._toBigInt(Math.max(result.fee ?? 0, MIN_TX_FEE_SATS))
-    const opReturnFee = this._toBigInt(opReturnOutputSize) * feeRate
-    const totalFee = baseFee + opReturnFee
-
-    const utxos = result.utxos.map(({ __ref }) => ({
+    const utxos = selected.utxos.map(({ __ref }) => ({
       ...__ref,
       vout: {
         value: this._toBigInt(__ref.value),
         scriptPubKey: { hex: fromAddressScriptHex }
       }
     }))
-
-    const total = utxos.reduce((s, u) => s + this._toBigInt(u.value), 0n)
-    const changeValue = total - totalFee - amount
-
-    if (changeValue < 0n) {
-      throw new Error('Insufficient balance after fees (including OP_RETURN output).')
-    }
-
-    if (changeValue <= this._dustLimit) {
-      return {
-        utxos,
-        fee: totalFee + changeValue,
-        changeValue: 0n
-      }
-    }
 
     return { utxos, fee: totalFee, changeValue }
   }

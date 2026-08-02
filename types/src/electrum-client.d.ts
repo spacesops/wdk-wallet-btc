@@ -27,6 +27,11 @@ export default class ElectrumClient {
      * @param {PersistencePolicy} [persistencePolicy] - The persistence policy.
      */
     constructor(port: number, host: string, protocol: "tcp" | "tls" | "ssl", persistencePolicy?: PersistencePolicy);
+    /** @private Used by debug logs */
+    private _rpcHost;
+    _rpcPort: number;
+    _rpcProtocol: "tls" | "ssl" | "tcp";
+    _rpcEndpoint: string;
     /**
      * @private
      * @type {ElectrumConfig}
