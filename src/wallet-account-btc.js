@@ -16,6 +16,7 @@
 import { hmac } from '@noble/hashes/hmac'
 import { sha512 } from '@noble/hashes/sha2'
 import { address as btcAddress, initEccLib, networks, payments, Psbt, Transaction } from 'bitcoinjs-lib'
+import { tapTweakHash, tweakKey } from 'bitcoinjs-lib/src/payments/bip341'
 import { BIP32Factory } from 'bip32'
 import bitcoinMessageModule from '@bitcoinerlab/btcmessage'
 import pLimit from 'p-limit'
@@ -55,6 +56,13 @@ const bitcoinMessage = MessageFactory(ecc)
  * @property {string} [recipient] - The receiving address for outgoing transfers.
  */
 
+/**
+ * @typedef {Object} TaprootKeyMaterialHex
+ * @property {string} internalPubKeyHex - The 32-byte Taproot internal public key (hex).
+ * @property {string} privateKeyHex - The BIP-32 account private key (hex). Sensitive.
+ * @property {string} tweakedPrivateKeyHex - The tweaked Taproot private key used for Schnorr signing (hex). Sensitive.
+ */
+
 const MASTER_SECRET = Uint8Array.from('Bitcoin seed', char => char.charCodeAt(0))
 
 const BITCOIN = {
@@ -72,9 +80,58 @@ const REQUEST_BATCH_SIZE = 64
 
 const POLLING_INTERVAL = 300
 
+const SECP256K1_ORDER = BigInt('0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141')
+
 const bip32 = BIP32Factory(ecc)
 
 initEccLib(ecc)
+
+/**
+ * Encode data as a Bitcoin script push (direct push / OP_PUSHDATA1/2/4).
+ * @param {Uint8Array} dataBuffer
+ * @returns {Uint8Array}
+ */
+function encodeScriptPush (dataBuffer) {
+  const n = dataBuffer.length
+  if (n === 0) {
+    return Uint8Array.of(0x00)
+  }
+  if (n <= 75) {
+    const buf = new Uint8Array(1 + n)
+    buf[0] = n
+    buf.set(dataBuffer, 1)
+    return buf
+  }
+  if (n <= 255) {
+    const buf = new Uint8Array(2 + n)
+    buf[0] = 0x4c
+    buf[1] = n
+    buf.set(dataBuffer, 2)
+    return buf
+  }
+  if (n <= 65535) {
+    const buf = new Uint8Array(3 + n)
+    buf[0] = 0x4d
+    buf[1] = n & 0xff
+    buf[2] = (n >> 8) & 0xff
+    buf.set(dataBuffer, 3)
+    return buf
+  }
+  const buf = new Uint8Array(5 + n)
+  buf[0] = 0x4e
+  buf[1] = n & 0xff
+  buf[2] = (n >> 8) & 0xff
+  buf[3] = (n >> 16) & 0xff
+  buf[4] = (n >> 24) & 0xff
+  buf.set(dataBuffer, 5)
+  return buf
+}
+
+function negatePrivKey (privKey) {
+  const asBigInt = BigInt('0x' + toHex(privKey))
+  const negated = (SECP256K1_ORDER - asBigInt) % SECP256K1_ORDER
+  return fromHex(negated.toString(16).padStart(64, '0'))
+}
 
 function derivePath (seed, path) {
   const masterKeyAndChainCodeBuffer = hmac(sha512, MASTER_SECRET, seed)
@@ -92,12 +149,24 @@ function derivePath (seed, path) {
   return { masterNode, account }
 }
 
+function isTaprootAddress (address) {
+  const toLower = address.toLowerCase()
+  return toLower.startsWith('bc1p') || toLower.startsWith('tb1p') || toLower.startsWith('bcrt1p')
+}
+
+function assertTaprootRecipient (to) {
+  if (!isTaprootAddress(to)) {
+    throw new Error('Recipient address must be a Taproot (P2TR) address. Taproot addresses start with bc1p (mainnet), tb1p (testnet), or bcrt1p (regtest).')
+  }
+}
+
 /** @implements {IWalletAccount<string>} */
 export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
   /**
    * Creates a new bitcoin wallet account.
+   * Supports P2PKH (BIP-44), P2WPKH (BIP-84), and P2TR Taproot (BIP-86).
    *
-   * @param {string | Uint8Array} seed - The wallet's [BIP-39](https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki) seed phrase.
+   * @param {string | Uint8Array} seed - The wallet's BIP-39 seed phrase.
    * @param {string} path - The derivation path suffix (e.g. "0'/0/0").
    * @param {BtcWalletConfig} [config] - The configuration object.
    */
@@ -110,10 +179,27 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
       seed = bip39.mnemonicToSeedSync(seed)
     }
 
-    const bip = config.bip ?? 84
+    let bip = config.bip
+    if (bip === undefined) {
+      bip = config.script_type === 'P2TR' ? 86 : 84
+    }
 
-    if (![44, 84].includes(bip)) {
-      throw new Error('Invalid bip specification. Supported bips: 44, 84.')
+    let scriptType = config.script_type
+    if (scriptType === undefined) {
+      if (bip === 86) scriptType = 'P2TR'
+      else if (bip === 44) scriptType = 'P2PKH'
+      else scriptType = 'P2WPKH'
+    }
+
+    if (![44, 84, 86].includes(bip)) {
+      throw new Error('Invalid bip specification. Supported bips: 44, 84, 86.')
+    }
+
+    if (bip === 86 && scriptType !== 'P2TR') {
+      throw new Error('BIP 86 requires script_type to be "P2TR".')
+    }
+    if (scriptType === 'P2TR' && bip !== 86) {
+      throw new Error('script_type "P2TR" requires bip to be 86.')
     }
 
     const netdp = config.network === 'bitcoin' ? 0 : 1
@@ -123,9 +209,20 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
 
     const network = networks[config.network] || networks.bitcoin
 
-    const { address } = bip === 44
-      ? payments.p2pkh({ pubkey: account.publicKey, network })
-      : payments.p2wpkh({ pubkey: account.publicKey, network })
+    let address
+    if (scriptType === 'P2TR') {
+      const { address: p2trAddress } = payments.p2tr({
+        internalPubkey: account.publicKey.slice(1),
+        network
+      })
+      address = p2trAddress
+    } else if (bip === 44) {
+      const { address: p2pkhAddress } = payments.p2pkh({ pubkey: account.publicKey, network })
+      address = p2pkhAddress
+    } else {
+      const { address: p2wpkhAddress } = payments.p2wpkh({ pubkey: account.publicKey, network })
+      address = p2wpkhAddress
+    }
 
     super(address, config)
 
@@ -144,10 +241,24 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
     this._bip = bip
 
     /** @private */
+    this._scriptType = scriptType
+
+    /** @private */
     this._masterNode = masterNode
 
     /** @private */
     this._account = account
+
+    if (scriptType === 'P2TR') {
+      if (!account?.publicKey || account.publicKey.length !== 33) {
+        throw new Error('Invalid account public key for P2TR initialization.')
+      }
+      /** @private */
+      this._internalPubkey = Uint8Array.from(account.publicKey.slice(1))
+    } else {
+      /** @private */
+      this._internalPubkey = undefined
+    }
   }
 
   /**
@@ -171,10 +282,6 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
   /**
    * The account's key pair.
    *
-   * The uint8 arrays are bound to the wallet account, so any external change will reflect to the internal representation. For this reason,
-   * it's strongly recommended to treat the key pair as a read-only view of the keys. While it's still technically possible to alter their
-   * content, client code should never do so.
-   *
    * @type {KeyPair}
    */
   get keyPair () {
@@ -185,17 +292,51 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
   }
 
   /**
+   * The script type of this account (`P2TR`, `P2WPKH`, or `P2PKH`).
+   *
+   * @type {string}
+   */
+  get scriptType () {
+    return this._scriptType
+  }
+
+  /**
+   * Exports Taproot key material as hex.
+   * Returns private key material — treat as sensitive. Intended for Koine/Satochip-adjacent tooling.
+   *
+   * @returns {TaprootKeyMaterialHex | null} Key material, or null when this account is not P2TR.
+   */
+  getTaprootKeyMaterialHex () {
+    if (this._scriptType !== 'P2TR' || !this._account || !this._internalPubkey) {
+      return null
+    }
+
+    const { tweakedPrivKey } = this._deriveTweakedTaprootKeys()
+
+    return {
+      internalPubKeyHex: toHex(this._internalPubkey),
+      privateKeyHex: toHex(this._account.privateKey),
+      tweakedPrivateKeyHex: toHex(tweakedPrivKey)
+    }
+  }
+
+  /**
    * Signs a message.
+   * For P2WPKH (BIP-84) and P2TR (BIP-86), uses SegWit message signing format.
    *
    * @param {string} message - The message to sign.
    * @returns {Promise<string>} The message's signature.
    */
   async sign (message) {
+    const segwit = this._bip === 84 || this._bip === 86
+      ? { segwitType: 'p2wpkh' }
+      : undefined
+
     return toBase64(bitcoinMessage.sign(
       message,
       this._account.privateKey,
       true,
-      this._bip === 84 ? { segwitType: 'p2wpkh' } : undefined
+      segwit
     ))
   }
 
@@ -218,6 +359,8 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
 
   /**
    * Quotes the costs of a send transaction operation.
+   * When given a signed hex string, fee-quotes that transaction without rebuilding it.
+   * Distinct from {@link WalletAccountBtc#quoteSendTransactionTX}, which builds a signed hex from `{to,value}`.
    *
    * @param {BtcTransaction | string} tx - The transaction, or a signed raw transaction as a hex string.
    * @returns {Promise<Omit<TransactionResult, 'hash'>>} The transaction's quotes.
@@ -289,6 +432,186 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
     }
 
     return { hash: txid, fee }
+  }
+
+  /**
+   * Sends a transaction with a memo (OP_RETURN output).
+   * Requires the recipient address to be a Taproot (P2TR) address.
+   *
+   * @param {Object} options - Transaction options.
+   * @param {string} options.to - The recipient's Taproot Bitcoin address.
+   * @param {number | bigint} options.value - The amount to send (in satoshis).
+   * @param {string} options.memo - The memo string to embed in OP_RETURN (max 75 bytes UTF-8).
+   * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+   * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+   * @returns {Promise<TransactionResult>} The transaction result.
+   */
+  async sendTransactionWithMemo ({ to, value, memo, feeRate, confirmationTarget = 1 }) {
+    assertTaprootRecipient(to)
+    await this._ensureConnected()
+
+    const address = await this.getAddress()
+
+    if (!feeRate) {
+      const feeEstimate = await this._client.estimateFee(confirmationTarget)
+      feeRate = this._toBigInt(Math.max(feeEstimate * 100_000, 1))
+    }
+
+    const { utxos, fee, changeValue } = await this._planSpendWithMemo({
+      fromAddress: address,
+      toAddress: to,
+      amount: value,
+      memo,
+      feeRate
+    })
+
+    if (this._config.transactionMaxFee !== undefined && fee > this._config.transactionMaxFee) {
+      throw new Error('Exceeded maximum fee cost for transaction operation.')
+    }
+
+    const opReturnScript = this.createOpReturnScript(memo)
+    const tx = await this._getRawTransaction({
+      utxos,
+      to,
+      value,
+      fee,
+      feeRate,
+      changeValue,
+      additionalOutputs: [{ script: opReturnScript, value: 0n }]
+    })
+
+    await this._client.broadcast(tx.hex)
+
+    return { hash: tx.txid, fee: tx.fee }
+  }
+
+  /**
+   * Builds and signs a transaction from `{to,value}` and returns the raw hex without broadcasting.
+   * Distinct from {@link WalletAccountBtc#quoteSendTransaction} when given a hex string (fee-only quote).
+   *
+   * @param {BtcTransaction} tx - The transaction options.
+   * @returns {Promise<string>} The signed raw transaction hex.
+   */
+  async quoteSendTransactionTX ({ to, value, feeRate, confirmationTarget = 1 }) {
+    const { tx } = await this._buildSignedTransaction({ to, value, feeRate, confirmationTarget })
+    return tx.hex
+  }
+
+  /**
+   * Builds and signs a memo transaction and returns the raw hex without broadcasting.
+   * Requires a Taproot recipient.
+   *
+   * @param {Object} options - Transaction options.
+   * @param {string} options.to - The recipient's Taproot Bitcoin address.
+   * @param {number | bigint} options.value - The amount to send (in satoshis).
+   * @param {string} options.memo - The memo string (max 75 bytes UTF-8).
+   * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+   * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+   * @returns {Promise<string>} The signed raw transaction hex.
+   */
+  async quoteSendTransactionWithMemoTX ({ to, value, memo, feeRate, confirmationTarget = 1 }) {
+    assertTaprootRecipient(to)
+    await this._ensureConnected()
+
+    const address = await this.getAddress()
+
+    if (!feeRate) {
+      const feeEstimate = await this._client.estimateFee(confirmationTarget)
+      feeRate = this._toBigInt(Math.max(feeEstimate * 100_000, 1))
+    }
+
+    const { utxos, fee, changeValue } = await this._planSpendWithMemo({
+      fromAddress: address,
+      toAddress: to,
+      amount: value,
+      memo,
+      feeRate
+    })
+
+    const opReturnScript = this.createOpReturnScript(memo)
+    const tx = await this._getRawTransaction({
+      utxos,
+      to,
+      value,
+      fee,
+      feeRate,
+      changeValue,
+      additionalOutputs: [{ script: opReturnScript, value: 0n }]
+    })
+
+    return tx.hex
+  }
+
+  /**
+   * Creates an OP_RETURN script from a UTF-8 string.
+   *
+   * @param {string} data - The UTF-8 data to embed.
+   * @returns {Uint8Array} The OP_RETURN script.
+   */
+  createOpReturnScript (data) {
+    const dataBuffer = Buffer.from(data, 'utf8')
+    const pushPart = encodeScriptPush(dataBuffer)
+    const script = new Uint8Array(1 + pushPart.length)
+    script[0] = 0x6a
+    script.set(pushPart, 1)
+    return script
+  }
+
+  /**
+   * Creates an OP_RETURN script from hex-encoded data.
+   *
+   * @param {string} hexData - The hex-encoded data to embed.
+   * @returns {Uint8Array} The OP_RETURN script.
+   */
+  createOpReturnScriptFromHex (hexData) {
+    if (!/^[0-9a-fA-F]*$/.test(hexData)) {
+      throw new Error('Hex data must be a valid hexadecimal string')
+    }
+
+    const dataBuffer = fromHex(hexData)
+    const pushPart = encodeScriptPush(dataBuffer)
+    const script = new Uint8Array(1 + pushPart.length)
+    script[0] = 0x6a
+    script.set(pushPart, 1)
+    return script
+  }
+
+  /**
+   * Builds (without broadcasting) a two-input update transaction that spends a 1077-sat
+   * output from `priorTx` (signed by `priorAcct`) plus a funding UTXO from this account,
+   * embeds `hex` in OP_RETURN, and pays `value` (default 1077) to `to`.
+   *
+   * @param {Object} options - Transaction options.
+   * @param {string} options.to - The recipient's Bitcoin address.
+   * @param {string} options.hex - Hex-encoded OP_RETURN payload.
+   * @param {string} options.priorTx - Prior transaction id containing a 1077-sat output.
+   * @param {WalletAccountBtc} options.priorAcct - Account that owns the prior UTXO.
+   * @param {number | bigint} [options.value] - Amount to send (default: 1077).
+   * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+   * @param {number} [options.confirmationTarget] - Optional confirmation target (default: 1).
+   * @returns {Promise<{hex: string, fee: bigint}>} The signed hex and fee.
+   */
+  async quoteUpdateTransactionWithHexTX (options) {
+    const tx = await this._composeUpdateTransactionWithHex(options)
+    return { hex: tx.hex, fee: tx.fee }
+  }
+
+  /**
+   * Same as {@link WalletAccountBtc#quoteUpdateTransactionWithHexTX}, but broadcasts the result.
+   *
+   * @param {Object} options - See quoteUpdateTransactionWithHexTX.
+   * @returns {Promise<TransactionResult>} The transaction result.
+   */
+  async updateTransactionWithHex (options) {
+    await this._ensureConnected()
+    const tx = await this._composeUpdateTransactionWithHex(options)
+
+    if (this._config.transactionMaxFee !== undefined && tx.fee > this._config.transactionMaxFee) {
+      throw new Error('Exceeded maximum fee cost for transaction operation.')
+    }
+
+    await this._client.broadcast(tx.hex)
+    return { hash: tx.txid, fee: tx.fee }
   }
 
   /**
@@ -480,12 +803,9 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
   }
 
   /**
-   * Computes the fee of a signed raw transaction by resolving the value of each
-   * spent input from the blockchain and subtracting the total output value.
-   *
    * @private
-   * @param {Transaction} transaction - The decoded signed transaction.
-   * @returns {Promise<bigint>} The fee (in satoshis).
+   * @param {Transaction} transaction
+   * @returns {Promise<bigint>}
    */
   async _getSignedTransactionFee (transaction) {
     let totalInput = 0n
@@ -507,8 +827,248 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
     return totalInput - totalOutput
   }
 
-  /** @private */
-  async _getRawTransaction ({ utxos, to, value, fee, feeRate, changeValue }) {
+  /**
+   * @private
+   * @returns {{ tweakedOutputPubkey: Uint8Array, tweakedPrivKey: Uint8Array }}
+   */
+  _deriveTweakedTaprootKeys () {
+    return WalletAccountBtc._deriveTweakedTaprootKeysForAccount(this)
+  }
+
+  /**
+   * @private
+   * @param {WalletAccountBtc} account
+   * @returns {{ tweakedOutputPubkey: Uint8Array, tweakedPrivKey: Uint8Array }}
+   */
+  static _deriveTweakedTaprootKeysForAccount (account) {
+    const { output } = payments.p2tr({
+      internalPubkey: account._internalPubkey,
+      network: account._network
+    })
+    const tweakedOutputPubkey = output.slice(2, 34)
+
+    const tapTweakHashValue = tapTweakHash(Uint8Array.from(account._internalPubkey), undefined)
+    const verifiedTweakedResult = tweakKey(Uint8Array.from(account._internalPubkey), undefined)
+    if (!verifiedTweakedResult?.x || verifiedTweakedResult.x.length !== 32) {
+      throw new Error('Failed to verify tapTweak calculation using bitcoinjs-lib tweakKey')
+    }
+    if (compare(verifiedTweakedResult.x, tweakedOutputPubkey) !== 0) {
+      throw new Error('tapTweak calculation mismatch against p2tr output key')
+    }
+
+    let internalPrivKey = Uint8Array.from(account._account.privateKey)
+    const internalPubKeyFull = Uint8Array.from(account._account.publicKey)
+    if ((internalPubKeyFull[0] & 1) === 1) {
+      internalPrivKey = negatePrivKey(internalPrivKey)
+    }
+
+    const tweakedPrivKeyDirect = Uint8Array.from(ecc.privateAdd(internalPrivKey, tapTweakHashValue))
+    const tweakedPrivKey = verifiedTweakedResult.parity === 1
+      ? negatePrivKey(tweakedPrivKeyDirect)
+      : tweakedPrivKeyDirect
+
+    return { tweakedOutputPubkey, tweakedPrivKey }
+  }
+
+  /**
+   * @private
+   * @param {WalletAccountBtc} account
+   * @param {import('bitcoinjs-lib').Psbt} psbt
+   * @param {Object} utxo
+   */
+  static async _addAccountInput (account, psbt, utxo, getPrevTxHex) {
+    if (account._scriptType === 'P2TR') {
+      const inputData = {
+        hash: utxo.tx_hash,
+        index: utxo.tx_pos,
+        witnessUtxo: {
+          script: fromHex(utxo.vout.scriptPubKey.hex),
+          value: account._toBigInt(utxo.vout.value ?? utxo.value)
+        },
+        tapInternalKey: account._internalPubkey
+      }
+      psbt.addInput(inputData)
+      const inputIndex = psbt.inputCount - 1
+      const input = psbt.data.inputs[inputIndex]
+      if (input) {
+        input.tapBip32Derivation = [{
+          masterFingerprint: account._masterNode.fingerprint,
+          path: account._path,
+          pubkey: Uint8Array.from(account._internalPubkey),
+          leafHashes: []
+        }]
+      }
+      return
+    }
+
+    const baseInput = {
+      hash: utxo.tx_hash,
+      index: utxo.tx_pos,
+      bip32Derivation: [{
+        masterFingerprint: account._masterNode.fingerprint,
+        path: account._path,
+        pubkey: account._account.publicKey
+      }]
+    }
+
+    if (account._bip === 84) {
+      psbt.addInput({
+        ...baseInput,
+        witnessUtxo: {
+          script: fromHex(utxo.vout.scriptPubKey.hex),
+          value: account._toBigInt(utxo.vout.value ?? utxo.value)
+        }
+      })
+    } else {
+      const prevHex = await getPrevTxHex(utxo.tx_hash)
+      psbt.addInput({
+        ...baseInput,
+        nonWitnessUtxo: fromHex(prevHex)
+      })
+    }
+  }
+
+  /**
+   * @private
+   * @param {WalletAccountBtc} account
+   * @param {import('bitcoinjs-lib').Psbt} psbt
+   * @param {number} index
+   */
+  static _signAccountInput (account, psbt, index) {
+    if (account._scriptType === 'P2TR') {
+      const { tweakedOutputPubkey, tweakedPrivKey } = WalletAccountBtc._deriveTweakedTaprootKeysForAccount(account)
+      const taprootSigner = {
+        publicKey: tweakedOutputPubkey,
+        network: account._network,
+        signSchnorr: (hash) => ecc.signSchnorr(hash, tweakedPrivKey)
+      }
+      psbt.signInput(index, taprootSigner)
+      return
+    }
+
+    psbt.signInputHD(index, account._masterNode)
+  }
+
+  /**
+   * @private
+   */
+  async _composeUpdateTransactionWithHex ({ to, hex, priorTx, priorAcct, value, feeRate, confirmationTarget = 1 }) {
+    const sendValue = value !== undefined ? this._toBigInt(value) : 1077n
+
+    await this._ensureConnected()
+
+    const address = await this.getAddress()
+    const network = this._network
+
+    if (!feeRate) {
+      const feeEstimate = await this._client.estimateFee(confirmationTarget)
+      feeRate = this._toBigInt(Math.max(feeEstimate * 100_000, 1))
+    }
+
+    feeRate = this._toBigInt(feeRate)
+    if (feeRate < 1n) feeRate = 1n
+
+    if (!priorAcct) {
+      throw new Error('priorAcct parameter is required to sign the prior transaction UTXO')
+    }
+
+    const priorTxHex = await this._client.getTransaction(priorTx)
+    const priorTransaction = Transaction.fromHex(priorTxHex)
+
+    let priorUtxoIndex = -1
+    let priorUtxoScript = null
+    for (let i = 0; i < priorTransaction.outs.length; i++) {
+      const output = priorTransaction.outs[i]
+      if (BigInt(output.value) === 1077n) {
+        priorUtxoIndex = i
+        priorUtxoScript = output.script
+        break
+      }
+    }
+
+    if (priorUtxoIndex === -1) {
+      throw new Error(`No output with value 1077 sats found in transaction ${priorTx}`)
+    }
+
+    const unspent = await this._client.listUnspent(address)
+    if (!unspent || unspent.length === 0) {
+      throw new Error(`No unspent outputs available for address ${address}`)
+    }
+
+    const fromAddressScriptHex = toHex(btcAddress.toOutputScript(address, network))
+
+    const priorAcctAddress = await priorAcct.getAddress()
+    if (priorAcct._network.name !== network.name) {
+      throw new Error('priorAcct network must match the current account network')
+    }
+
+    const priorAcctScriptHex = toHex(btcAddress.toOutputScript(priorAcctAddress, network))
+    const priorUtxoScriptHex = toHex(priorUtxoScript)
+    if (priorUtxoScriptHex !== priorAcctScriptHex) {
+      throw new Error('Prior transaction UTXO script does not match priorAcct address. Cannot sign this input.')
+    }
+
+    const opReturnScript = this.createOpReturnScriptFromHex(hex)
+
+    const addrLower = address.toLowerCase()
+    const isP2TR = isTaprootAddress(address)
+    const isP2WPKH = addrLower.startsWith('bc1q') || addrLower.startsWith('tb1q') || addrLower.startsWith('bcrt1q')
+    const inputVBytes = isP2TR ? 58 : isP2WPKH ? 68 : 148
+    const outputVBytes = isP2TR ? 43 : isP2WPKH ? 31 : 34
+    const estimatedVSize = 11 + (2 * inputVBytes) + (3 * outputVBytes)
+    const estimatedFee = BigInt(estimatedVSize) * feeRate
+    const totalNeeded = sendValue + estimatedFee
+
+    let selectedUtxo = unspent.find(u => BigInt(u.value) >= totalNeeded)
+    if (!selectedUtxo) {
+      const sortedUtxos = [...unspent].sort((a, b) => Number(b.value) - Number(a.value))
+      selectedUtxo = sortedUtxos[0]
+    }
+
+    if (!selectedUtxo) {
+      throw new Error(`Insufficient balance to fund transaction. Need at least ${totalNeeded.toString()} sats.`)
+    }
+
+    const utxos = [
+      {
+        tx_hash: priorTx,
+        tx_pos: priorUtxoIndex,
+        value: 1077,
+        vout: {
+          value: 1077n,
+          scriptPubKey: { hex: priorUtxoScriptHex }
+        }
+      },
+      {
+        tx_hash: selectedUtxo.tx_hash,
+        tx_pos: selectedUtxo.tx_pos,
+        value: selectedUtxo.value,
+        vout: {
+          value: this._toBigInt(selectedUtxo.value),
+          scriptPubKey: { hex: fromAddressScriptHex }
+        }
+      }
+    ]
+
+    const totalInput = utxos.reduce((sum, u) => sum + this._toBigInt(u.value), 0n)
+    const changeValue = totalInput - sendValue - estimatedFee
+
+    return await this._buildMultiAccountTransaction({
+      utxos,
+      to,
+      value: sendValue,
+      fee: estimatedFee,
+      feeRate,
+      changeValue: changeValue > 0n ? changeValue : 0n,
+      additionalOutputs: [{ script: opReturnScript, value: 0n }],
+      priorAcct
+    })
+  }
+
+  /**
+   * @private
+   */
+  async _buildMultiAccountTransaction ({ utxos, to, value, fee, feeRate, changeValue, additionalOutputs = [], priorAcct }) {
     feeRate = this._toBigInt(feeRate)
     if (feeRate < 1n) feeRate = 1n
     value = this._toBigInt(value)
@@ -524,42 +1084,143 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
     }
 
     const buildAndSign = async (rcptVal, chgVal) => {
+      if (!this._masterNode || !this._account) {
+        throw new Error('Wallet account has been disposed or not properly initialized. Cannot build transaction.')
+      }
+      if (!priorAcct._masterNode || !priorAcct._account) {
+        throw new Error('Prior account has been disposed or not properly initialized. Cannot build transaction.')
+      }
+
       const psbt = new Psbt({ network: this._network })
 
-      for (const utxo of utxos) {
-        const baseInput = {
-          hash: utxo.tx_hash,
-          index: utxo.tx_pos,
-          bip32Derivation: [{
-            masterFingerprint: this._masterNode.fingerprint,
-            path: this._path,
-            pubkey: this._account.publicKey
-          }]
-        }
-
-        if (this._bip === 84) {
-          psbt.addInput({
-            ...baseInput,
-            witnessUtxo: {
-              script: fromHex(utxo.vout.scriptPubKey.hex),
-              value: utxo.vout.value
-            }
-          })
-        } else {
-          const prevHex = await getPrevTxHex(utxo.tx_hash)
-          psbt.addInput({
-            ...baseInput,
-            nonWitnessUtxo: fromHex(prevHex)
-          })
-        }
+      for (let i = 0; i < utxos.length; i++) {
+        const account = i === 0 ? priorAcct : this
+        await WalletAccountBtc._addAccountInput(account, psbt, utxos[i], getPrevTxHex)
       }
 
       psbt.addOutput({ address: to, value: rcptVal })
+
+      for (const output of additionalOutputs) {
+        if (output.script) {
+          if (output.value !== 0 && output.value !== 0n) {
+            throw new Error('OP_RETURN outputs must have value 0')
+          }
+          psbt.addOutput({ script: output.script, value: 0n })
+        } else if (output.address) {
+          psbt.addOutput({
+            address: output.address,
+            value: this._toBigInt(output.value)
+          })
+        } else {
+          throw new Error('Additional output must have either "script" or "address" property')
+        }
+      }
+
       if (chgVal > 0n) psbt.addOutput({ address: await this.getAddress(), value: chgVal })
 
-      utxos.forEach((_, index) => psbt.signInputHD(index, this._masterNode))
-      psbt.finalizeAllInputs()
+      for (let i = 0; i < utxos.length; i++) {
+        const account = i === 0 ? priorAcct : this
+        WalletAccountBtc._signAccountInput(account, psbt, i)
+      }
 
+      psbt.finalizeAllInputs()
+      return psbt.extractTransaction()
+    }
+
+    let currentRecipientAmnt = value
+    let currentChange = changeValue
+
+    let tx = await buildAndSign(currentRecipientAmnt, currentChange)
+    let vsize = tx.virtualSize()
+    let requiredFee = BigInt(vsize) * feeRate
+
+    if (requiredFee <= fee) {
+      return { txid: tx.getId(), hex: tx.toHex(), fee, vsize }
+    }
+
+    const dustLimit = this._dustLimit
+    const delta = requiredFee - fee
+    fee = requiredFee
+
+    if (currentChange > 0n) {
+      let newChange = currentChange - delta
+      if (newChange <= dustLimit) newChange = 0n
+      currentChange = newChange
+      tx = await buildAndSign(currentRecipientAmnt, currentChange)
+    } else {
+      const newRecipientAmnt = currentRecipientAmnt - delta
+      if (newRecipientAmnt <= dustLimit) {
+        throw new Error(`The amount after fees must be bigger than the dust limit (= ${dustLimit}).`)
+      }
+      currentRecipientAmnt = newRecipientAmnt
+      tx = await buildAndSign(currentRecipientAmnt, currentChange)
+    }
+
+    vsize = tx.virtualSize()
+    requiredFee = BigInt(vsize) * feeRate
+    if (requiredFee > fee) throw new Error('Fee shortfall after output rebalance.')
+
+    return { txid: tx.getId(), hex: tx.toHex(), fee, vsize }
+  }
+
+  /** @private */
+  async _getRawTransaction ({ utxos, to, value, fee, feeRate, changeValue, additionalOutputs = [] }) {
+    feeRate = this._toBigInt(feeRate)
+    if (feeRate < 1n) feeRate = 1n
+    value = this._toBigInt(value)
+    changeValue = this._toBigInt(changeValue)
+    fee = this._toBigInt(fee)
+
+    const legacyPrevTxCache = new Map()
+    const getPrevTxHex = async (txid) => {
+      if (legacyPrevTxCache.has(txid)) return legacyPrevTxCache.get(txid)
+      const hex = await this._client.getTransaction(txid)
+      legacyPrevTxCache.set(txid, hex)
+      return hex
+    }
+
+    const buildAndSign = async (rcptVal, chgVal) => {
+      if (!this._masterNode || !this._account) {
+        throw new Error('Wallet account has been disposed or not properly initialized. Cannot build transaction.')
+      }
+
+      if (this._scriptType === 'P2TR') {
+        if (!this._internalPubkey || this._internalPubkey.length !== 32) {
+          throw new Error('P2TR wallet not properly initialized. Internal public key is missing or invalid.')
+        }
+      }
+
+      const psbt = new Psbt({ network: this._network })
+
+      for (const utxo of utxos) {
+        await WalletAccountBtc._addAccountInput(this, psbt, utxo, getPrevTxHex)
+      }
+
+      psbt.addOutput({ address: to, value: rcptVal })
+
+      for (const output of additionalOutputs) {
+        if (output.script) {
+          if (output.value !== 0 && output.value !== 0n) {
+            throw new Error('OP_RETURN outputs must have value 0')
+          }
+          psbt.addOutput({ script: output.script, value: 0n })
+        } else if (output.address) {
+          psbt.addOutput({
+            address: output.address,
+            value: this._toBigInt(output.value)
+          })
+        } else {
+          throw new Error('Additional output must have either "script" or "address" property')
+        }
+      }
+
+      if (chgVal > 0n) psbt.addOutput({ address: await this.getAddress(), value: chgVal })
+
+      for (let index = 0; index < utxos.length; index++) {
+        WalletAccountBtc._signAccountInput(this, psbt, index)
+      }
+
+      psbt.finalizeAllInputs()
       return psbt.extractTransaction()
     }
 

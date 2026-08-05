@@ -32,6 +32,18 @@ describe('WalletManagerBtc', () => {
       expect(account.path).toBe("m/84'/1'/0'/0/3")
     })
 
+    test('should return a BIP-86 Taproot account when configured', async () => {
+      const taprootWallet = new WalletManagerBtc(SEED_PHRASE, { bip: 86, script_type: 'P2TR', network: 'regtest' })
+      const account = await taprootWallet.getAccount()
+
+      expect(account).toBeInstanceOf(WalletAccountBtc)
+      expect(account.path).toBe("m/86'/1'/0'/0/0")
+      expect(account.scriptType).toBe('P2TR')
+      expect((await account.getAddress()).startsWith('bcrt1p')).toBe(true)
+
+      taprootWallet.dispose()
+    })
+
     test('should throw if the index is a negative number', async () => {
       await expect(wallet.getAccount(-1)).rejects.toThrow(/Invalid format/)
     })

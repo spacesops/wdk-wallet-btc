@@ -16,7 +16,7 @@
 
 import { WalletAccountReadOnly } from '@tetherto/wdk-wallet'
 
-import { coinselect } from '@bitcoinerlab/coinselect'
+import { addUntilReach, coinselect } from '@bitcoinerlab/coinselect'
 import { DescriptorsFactory } from '@bitcoinerlab/descriptors'
 import * as ecc from '@bitcoinerlab/secp256k1'
 import bitcoinMessageModule from '@bitcoinerlab/btcmessage'
@@ -79,10 +79,13 @@ const bitcoinMessage = MessageFactory(ecc)
  * @typedef {Object} BtcWalletConfig
  * @property {IBtcClient | BtcClientDescriptor | Array<IBtcClient | BtcClientDescriptor>} [client] - The bitcoin client, or a list of bitcoin client options for connection fallback.
  * @property {"bitcoin" | "regtest" | "testnet"} [network] - The name of the network to use (default: "bitcoin").
- * @property {44 | 84} [bip] - The BIP address type used for key and address derivation.
+ * @property {44 | 84 | 86} [bip] - The BIP address type used for key and address derivation.
  *   - 44: [BIP-44 (P2PKH / legacy)](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)
  *   - 84: [BIP-84 (P2WPKH / native SegWit)](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki)
+ *   - 86: [BIP-86 (P2TR / Taproot)](https://github.com/bitcoin/bips/blob/master/bip-0086.mediawiki)
  *   - Default: 84 (P2WPKH).
+ * @property {"P2WPKH" | "P2TR"} [script_type] - Optional script type. Inferred from `bip` when omitted.
+ *   Must be `"P2TR"` when `bip` is 86, and must not be `"P2TR"` otherwise.
  * @property {number} [retries] - The number of retries in the failover mechanism.
  * @property {number | bigint} [transactionMaxFee] - The maximum fee amount for sendTransaction and signTransaction operations.
  */
@@ -105,12 +108,16 @@ const BIP_BY_ADDRESS_PREFIX = {
   n: 44,
   bc1q: 84,
   tb1q: 84,
-  bcrt1q: 84
+  bcrt1q: 84,
+  bc1p: 86,
+  tb1p: 86,
+  bcrt1p: 86
 }
 
 const DUST_LIMIT = {
   44: 546n,
-  84: 294n
+  84: 294n,
+  86: 330n
 }
 
 export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
@@ -178,6 +185,16 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
   }
 
   /**
+   * Returns the scriptPubKey hex for an address on this account's network.
+   *
+   * @param {string} address - The Bitcoin address.
+   * @returns {string} The scriptPubKey as a hex string.
+   */
+  getScriptPubKeyHex (address) {
+    return toHex(btcAddress.toOutputScript(address, this._network))
+  }
+
+  /**
    * Returns the account's bitcoin balance.
    *
    * @returns {Promise<bigint>} The bitcoin balance (in satoshis).
@@ -222,6 +239,45 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
       fromAddress: address,
       toAddress: to,
       amount: value,
+      feeRate
+    })
+
+    return { fee: BigInt(fee) }
+  }
+
+  /**
+   * Quotes the costs of a send transaction that embeds a UTF-8 memo in an OP_RETURN output.
+   * Requires the recipient address to be a Taproot (P2TR) address.
+   *
+   * @param {Object} options - Transaction options.
+   * @param {string} options.to - The recipient's Taproot Bitcoin address (bc1p / tb1p / bcrt1p).
+   * @param {number | bigint} options.value - The amount to send (in satoshis).
+   * @param {string} options.memo - The memo string to embed (max 75 bytes UTF-8).
+   * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+   * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+   * @returns {Promise<Omit<TransactionResult, 'hash'>>} The transaction's quotes.
+   */
+  async quoteSendTransactionWithMemo ({ to, value, memo, feeRate, confirmationTarget = 1 }) {
+    const toLower = to.toLowerCase()
+    const isTaproot = toLower.startsWith('bc1p') || toLower.startsWith('tb1p') || toLower.startsWith('bcrt1p')
+    if (!isTaproot) {
+      throw new Error('Recipient address must be a Taproot (P2TR) address. Taproot addresses start with bc1p (mainnet), tb1p (testnet), or bcrt1p (regtest).')
+    }
+
+    await this._ensureConnected()
+
+    const address = await this.getAddress()
+
+    if (!feeRate) {
+      const feeEstimate = await this._client.estimateFee(confirmationTarget)
+      feeRate = this._toBigInt(Math.max(feeEstimate * 100_000, 1))
+    }
+
+    const { fee } = await this._planSpendWithMemo({
+      fromAddress: address,
+      toAddress: to,
+      amount: value,
+      memo,
       feeRate
     })
 
@@ -298,11 +354,16 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     }
 
     const addr = String(fromAddress).toLowerCase()
+    const isP2TR =
+      addr.startsWith('bc1p') ||
+      addr.startsWith('tb1p') ||
+      addr.startsWith('bcrt1p')
     const isP2WPKH =
       addr.startsWith('bc1q') ||
       addr.startsWith('tb1q') ||
       addr.startsWith('bcrt1q')
-    const inputVBytes = isP2WPKH ? 68 : 148
+    const inputVBytes = isP2TR ? 58 : isP2WPKH ? 68 : 148
+    const outputVBytes = isP2TR ? 43 : 34
 
     const perInputFee = Math.ceil(inputVBytes * feeRate)
     let spendableUtxos = unspent.filter(u => (u.value - perInputFee) > 0)
@@ -319,7 +380,6 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     const totalInputValueSats = spendableUtxos.reduce((sum, u) => sum + u.value, 0)
     const inputCount = spendableUtxos.length
     const txOverheadVBytes = 11
-    const outputVBytes = 34
 
     const twoOutputsVSize = txOverheadVBytes + (inputCount * inputVBytes) + (2 * outputVBytes)
     const twoOutputsFeeSats = Math.max(Math.ceil(twoOutputsVSize * feeRate), MIN_TX_FEE_SATS)
@@ -515,5 +575,115 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
     }
 
     return { utxos, fee, changeValue }
+  }
+
+  /**
+   * Builds a fee-aware funding plan for a send that includes an OP_RETURN memo output.
+   * Uses addUntilReach so a single UTXO that covers payment+base fee but not OP_RETURN
+   * fees can still be supplemented by additional inputs.
+   *
+   * @protected
+   * @param {Object} tx - The transaction.
+   * @param {string} tx.fromAddress - The sender's address.
+   * @param {string} tx.toAddress - The recipient's address.
+   * @param {number | bigint} tx.amount - The amount to send (in satoshis).
+   * @param {string} tx.memo - The UTF-8 memo (max 75 bytes).
+   * @param {number | bigint} tx.feeRate - The fee rate (in sats/vB).
+   * @returns {Promise<{ utxos: OutputWithValue[], fee: bigint, changeValue: bigint }>} The funding plan.
+   */
+  async _planSpendWithMemo ({ fromAddress, toAddress, amount, memo, feeRate }) {
+    amount = this._toBigInt(amount)
+    feeRate = this._toBigInt(feeRate)
+    if (feeRate < 1n) feeRate = 1n
+
+    if (amount <= this._dustLimit) {
+      throw new Error(`The amount must be bigger than the dust limit (= ${this._dustLimit}).`)
+    }
+
+    const memoBuffer = Buffer.from(memo, 'utf8')
+    if (memoBuffer.length > 75) {
+      throw new Error('Memo cannot exceed 75 bytes when UTF-8 encoded.')
+    }
+
+    const network = this._network
+
+    const fromAddressScriptHex = toHex(btcAddress.toOutputScript(fromAddress, network))
+    const fromAddressOutput = new Output({ descriptor: `addr(${fromAddress})`, network })
+    const toAddressOutput = new Output({ descriptor: `addr(${toAddress})`, network })
+
+    const unspent = await this._client.listUnspent(fromAddress)
+
+    if (!unspent || unspent.length === 0) {
+      throw new Error('No unspent outputs available.')
+    }
+
+    const utxosForCoinSelect = unspent.map(u => ({
+      output: fromAddressOutput,
+      value: this._toBigInt(u.value),
+      __ref: u
+    }))
+
+    const opReturnOutputSize = 1 + 1 + memoBuffer.length
+
+    const coinselectInputBase = {
+      remainder: fromAddressOutput,
+      targets: [{ output: toAddressOutput, value: amount }],
+      feeRate: Number(feeRate)
+    }
+
+    let pool = [...utxosForCoinSelect]
+    let selected = null
+    let totalFee = 0n
+    let changeValue = 0n
+
+    while (pool.length > 0 && !selected) {
+      const result = addUntilReach({ ...coinselectInputBase, utxos: pool })
+      if (!result) {
+        break
+      }
+
+      const baseFee = this._toBigInt(result.fee > BigInt(MIN_TX_FEE_SATS) ? result.fee : BigInt(MIN_TX_FEE_SATS))
+      const opReturnFee = this._toBigInt(opReturnOutputSize) * feeRate
+      const candidateTotalFee = baseFee + opReturnFee
+      const candidateTotal = result.utxos.reduce((s, u) => s + this._toBigInt(u.value), 0n)
+      const candidateChange = candidateTotal - candidateTotalFee - amount
+
+      if (candidateChange >= 0n) {
+        selected = result
+        if (candidateChange <= this._dustLimit) {
+          totalFee = candidateTotalFee + candidateChange
+          changeValue = 0n
+        } else {
+          totalFee = candidateTotalFee
+          changeValue = candidateChange
+        }
+        break
+      }
+
+      const minSelected = Math.min(...result.utxos.map(u => Number(u.value)))
+      const nextPool = pool.filter(u => Number(u.value) > minSelected)
+      if (nextPool.length === pool.length) {
+        break
+      }
+      pool = nextPool
+    }
+
+    if (!selected) {
+      throw new Error('Insufficient balance to send the transaction.')
+    }
+
+    if (selected.utxos.length > MAX_UTXO_INPUTS) {
+      throw new Error('Exceeded maximum allowed inputs for transaction.')
+    }
+
+    const utxos = selected.utxos.map(({ __ref }) => ({
+      ...__ref,
+      vout: {
+        value: this._toBigInt(__ref.value),
+        scriptPubKey: { hex: fromAddressScriptHex }
+      }
+    }))
+
+    return { utxos, fee: totalFee, changeValue }
   }
 }

@@ -5,3 +5,4 @@ db
 .vscode
 .DS_Store
 NOTES.md
+*.tgz

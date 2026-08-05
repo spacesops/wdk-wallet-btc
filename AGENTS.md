@@ -44,6 +44,6 @@ Source code must be strictly typed using JSDoc comments to support the `build:ty
 
 ## Repository Specifics
 - **Domain:** Bitcoin Wallet Management.
-- **Key Libraries:** `bitcoinjs-lib`, `@mempool/electrum-client`, `bip32`.
+- **Key Libraries:** `bitcoinjs-lib`, vendored Electrum client (from `@mempool/electrum-client`), `bip32`.
 - **Standards:** BIP-84 (Native SegWit m/84'/0').
 - **Architecture:** UTXO-based management using Electrum servers.

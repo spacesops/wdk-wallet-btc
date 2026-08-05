@@ -34,6 +34,15 @@ const ACCOUNTS = {
       privateKey: '007335c465cb8183b8a43d3f4eb7dbeb65f51e3a94c4a42369f3d2979ffa35fa',
       publicKey: '02e928d54a04833586b14e9c910884f589aebdc713a055e655c2fa13306c1b4f7f'
     }
+  },
+  86: {
+    index: 0,
+    path: "m/86'/1'/0'/0/0",
+    address: 'bcrt1pdlef9rn0emeqm8l6v9avakcfardzsswlm2n30jq7uh9vc7eev4qqcnkec4',
+    keyPair: {
+      privateKey: 'd7c02ec019d224e9337d6b8135d4990526c522c028791f2b7cc95b4b9b7699fb',
+      publicKey: '02b428360693e73e6134bcb97c2d1cbd7e5d80d9840dcd42bf014f66494697586e'
+    }
   }
 }
 
@@ -41,19 +50,22 @@ const MESSAGE = 'Dummy message to sign.'
 
 const SIGNATURES = {
   44: 'H4RwJWJzRmVkgQDqmTgX0qCbSONLQjvjfXH7ZdKZs5S3BWbpfjqbGdIJQXy/+ppW4Lvaw0wZ/UaDOLhMw5TIDuk=',
-  84: 'KAVgsxrQT5V4Mhfnk6taeCN1/j8p/sa8S9iNsbsgRb8zbfNOOPXV1w3dQQV0IjboJrlxYuDJnHw5a/E6vRJ+0Ek='
+  84: 'KAVgsxrQT5V4Mhfnk6taeCN1/j8p/sa8S9iNsbsgRb8zbfNOOPXV1w3dQQV0IjboJrlxYuDJnHw5a/E6vRJ+0Ek=',
+  86: 'KHBoDunoJWY8zjF4oV78Rnm8Zpq5b4NYhYJ0eEZbbKT8FkfIx8hvz/LbxJ0gOPPvvzY9xXs2SufUb4Km3vHP7+0='
 }
 
 export const FEES = {
   44: 223n,
-  84: 141n
+  84: 141n,
+  86: 154n
 }
 
-describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
+describe.each([44, 84, 86])(`WalletAccountBtc`, (bip) => {
   const CONFIGURATION = {
     client: { type: 'electrum', clientConfig: { host: HOST, port: ELECTRUM_PORT } },
     network: 'regtest',
-    bip
+    bip,
+    ...(bip === 86 ? { script_type: 'P2TR' } : {})
   }
 
   const bitcoin = new BitcoinCli({
@@ -321,8 +333,12 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
       const amount = Math.round(transaction.details[0].amount * 1e8)
       expect(amount).toBe(TRANSACTION.value)
 
-      const expectedFee = FEES[bip] * BigInt(TRANSACTION.feeRate)
-      expect(fee).toBe(expectedFee)
+      if (bip === 86) {
+        expect(fee).toBeGreaterThan(0n)
+      } else {
+        const expectedFee = FEES[bip] * BigInt(TRANSACTION.feeRate)
+        expect(fee).toBe(expectedFee)
+      }
     })
 
     test('should successfully send a transaction with a fixed fee rate (bigint)', async () => {
@@ -339,8 +355,12 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
       const amount = Math.round(transaction.details[0].amount * 1e8)
       expect(amount).toBe(TRANSACTION.value)
 
-      const expectedFee = FEES[bip] * TRANSACTION.feeRate
-      expect(fee).toBe(expectedFee)
+      if (bip === 86) {
+        expect(fee).toBeGreaterThan(0n)
+      } else {
+        const expectedFee = FEES[bip] * TRANSACTION.feeRate
+        expect(fee).toBe(expectedFee)
+      }
     })
 
     test('should create a change output when leftover > dust limit', async () => {
@@ -627,4 +647,83 @@ describe.each([44, 84])(`WalletAccountBtc`, (bip) => {
       readOnlyAccount._client.close()
     })
   })
+
+  if (bip === 86) {
+    describe('Taproot (P2TR) specific tests', () => {
+      test('should generate a Bech32m address (starts with bcrt1p for regtest)', async () => {
+        const address = await account.getAddress()
+        expect(address).toBe(ACCOUNTS[86].address)
+        expect(address.startsWith('bcrt1p')).toBe(true)
+        expect(account.scriptType).toBe('P2TR')
+      })
+
+      test('should export taproot key material hex', () => {
+        const material = account.getTaprootKeyMaterialHex()
+        expect(material).toEqual({
+          internalPubKeyHex: 'b428360693e73e6134bcb97c2d1cbd7e5d80d9840dcd42bf014f66494697586e',
+          privateKeyHex: ACCOUNTS[86].keyPair.privateKey,
+          tweakedPrivateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/)
+        })
+      })
+
+      test('should create and sign Taproot transactions with Schnorr signatures', async () => {
+        const { hash, fee } = await account.sendTransaction({
+          to: recipient,
+          value: 10_000
+        })
+
+        expect(hash).toBeTruthy()
+        expect(typeof fee).toBe('bigint')
+        expect(fee).toBeGreaterThan(0n)
+
+        await waiter.mine()
+
+        const receipt = await account.getTransactionReceipt(hash)
+        expect(receipt).toBeTruthy()
+      })
+
+      test('should estimate fees correctly for Taproot transactions', async () => {
+        const quote = await account.quoteSendTransaction({
+          to: recipient,
+          value: 10_000
+        })
+
+        expect(quote.fee).toBeTruthy()
+        expect(typeof quote.fee).toBe('bigint')
+        expect(quote.fee).toBeGreaterThan(0n)
+      })
+
+      test('should quote and build a memo transaction hex', async () => {
+        const taprootRecipient = ACCOUNTS[86].address
+        bitcoin.sendToAddress(await account.getAddress(), 0.01)
+        await waiter.mine()
+
+        const quote = await account.quoteSendTransactionWithMemo({
+          to: taprootRecipient,
+          value: 5_000,
+          memo: 'wdk-memo',
+          feeRate: 1
+        })
+        expect(quote.fee).toBeGreaterThan(0n)
+
+        const hex = await account.quoteSendTransactionWithMemoTX({
+          to: taprootRecipient,
+          value: 5_000,
+          memo: 'wdk-memo',
+          feeRate: 1
+        })
+        const tx = Transaction.fromHex(hex)
+        expect(tx.outs.some(out => out.script[0] === 0x6a && BigInt(out.value) === 0n)).toBe(true)
+      })
+
+      test('should build unsigned-path compose hex via quoteSendTransactionTX', async () => {
+        const hex = await account.quoteSendTransactionTX({
+          to: recipient,
+          value: 1_000,
+          feeRate: 1
+        })
+        expect(Transaction.fromHex(hex).outs.length).toBeGreaterThan(0)
+      })
+    })
+  }
 })

@@ -13,7 +13,7 @@
 // limitations under the License.
 'use strict'
 
-import MempoolClient from '@mempool/electrum-client'
+import MempoolClient from '../vendor/electrum-client/index.cjs'
 import { networks } from 'bitcoinjs-lib'
 import { toScriptHash } from './btc-client.js'
 
@@ -35,7 +35,7 @@ import { toScriptHash } from './btc-client.js'
 /** @typedef {import('./btc-client.js').BtcHistoryItem} BtcHistoryItem */
 
 /**
- * Electrum client using @mempool/electrum-client.
+ * Electrum client using a Bare/Node-compatible fork of @mempool/electrum-client.
  *
  * @implements {IBtcClient}
  */

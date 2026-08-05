@@ -3,6 +3,9 @@
     "index.js",
     "src/**/*.js",
   ],
+  "exclude": [
+    "src/vendor/**"
+  ],
   "compilerOptions": {
     "target": "ES2015",
     "module": "NodeNext",

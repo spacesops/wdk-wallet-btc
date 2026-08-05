@@ -51,12 +51,38 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
      */
     private _dustLimit;
     /**
+     * Returns the scriptPubKey hex for an address on this account's network.
+     *
+     * @param {string} address - The Bitcoin address.
+     * @returns {string} The scriptPubKey as a hex string.
+     */
+    getScriptPubKeyHex(address: string): string;
+    /**
      * Quotes the costs of a send transaction operation.
      *
      * @param {BtcTransaction} tx - The transaction.
      * @returns {Promise<Omit<TransactionResult, 'hash'>>} The transaction's quotes.
      */
     quoteSendTransaction({ to, value, feeRate, confirmationTarget }: BtcTransaction): Promise<Omit<TransactionResult, "hash">>;
+    /**
+     * Quotes the costs of a send transaction that embeds a UTF-8 memo in an OP_RETURN output.
+     * Requires the recipient address to be a Taproot (P2TR) address.
+     *
+     * @param {Object} options - Transaction options.
+     * @param {string} options.to - The recipient's Taproot Bitcoin address (bc1p / tb1p / bcrt1p).
+     * @param {number | bigint} options.value - The amount to send (in satoshis).
+     * @param {string} options.memo - The memo string to embed (max 75 bytes UTF-8).
+     * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+     * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+     * @returns {Promise<Omit<TransactionResult, 'hash'>>} The transaction's quotes.
+     */
+    quoteSendTransactionWithMemo({ to, value, memo, feeRate, confirmationTarget }: {
+        to: string;
+        value: number | bigint;
+        memo: string;
+        feeRate?: number | bigint;
+        confirmationTarget?: number;
+    }): Promise<Omit<TransactionResult, "hash">>;
     /**
      * Returns a transaction's receipt.
      *
@@ -123,6 +149,31 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
         utxos: OutputWithValue[];
         fee: number;
         changeValue: number;
+    }>;
+    /**
+     * Builds a fee-aware funding plan for a send that includes an OP_RETURN memo output.
+     * Uses addUntilReach so a single UTXO that covers payment+base fee but not OP_RETURN
+     * fees can still be supplemented by additional inputs.
+     *
+     * @protected
+     * @param {Object} tx - The transaction.
+     * @param {string} tx.fromAddress - The sender's address.
+     * @param {string} tx.toAddress - The recipient's address.
+     * @param {number | bigint} tx.amount - The amount to send (in satoshis).
+     * @param {string} tx.memo - The UTF-8 memo (max 75 bytes).
+     * @param {number | bigint} tx.feeRate - The fee rate (in sats/vB).
+     * @returns {Promise<{ utxos: OutputWithValue[], fee: bigint, changeValue: bigint }>} The funding plan.
+     */
+    protected _planSpendWithMemo({ fromAddress, toAddress, amount, memo, feeRate }: {
+        fromAddress: string;
+        toAddress: string;
+        amount: number | bigint;
+        memo: string;
+        feeRate: number | bigint;
+    }): Promise<{
+        utxos: OutputWithValue[];
+        fee: bigint;
+        changeValue: bigint;
     }>;
 }
 export type MempoolElectrumConfig = import("./transports/index.js").MempoolElectrumConfig;
@@ -198,9 +249,15 @@ export type BtcWalletConfig = {
      * - The BIP address type used for key and address derivation.
      * - 44: [BIP-44 (P2PKH / legacy)](https://github.com/bitcoin/bips/blob/master/bip-0044.mediawiki)
      * - 84: [BIP-84 (P2WPKH / native SegWit)](https://github.com/bitcoin/bips/blob/master/bip-0084.mediawiki)
+     * - 86: [BIP-86 (P2TR / Taproot)](https://github.com/bitcoin/bips/blob/master/bip-0086.mediawiki)
      * - Default: 84 (P2WPKH).
      */
-    bip?: 44 | 84;
+    bip?: 44 | 84 | 86;
+    /**
+     * - Optional script type. Inferred from `bip` when omitted.
+     * Must be `"P2TR"` when `bip` is 86, and must not be `"P2TR"` otherwise.
+     */
+    script_type?: "P2WPKH" | "P2TR";
     /**
      * - The number of retries in the failover mechanism.
      */
