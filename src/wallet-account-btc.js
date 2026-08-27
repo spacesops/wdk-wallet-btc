@@ -299,6 +299,43 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
   get scriptType () {
     return this._scriptType
   }
+  /**
+   * spaces-wallet-taproot-key-material
+   * Export Taproot internal pubkey + private + tweaked private key as hex.
+   */
+  getTaprootKeyMaterialHex () {
+    if (this._scriptType !== 'P2TR' || !this._account || !this._internalPubkey) {
+      return null
+    }
+    const internalPubkey = Buffer.from(this._internalPubkey)
+    const privateKeyHex = Buffer.from(this._account.privateKey).toString('hex')
+    const internalPubKeyHex = internalPubkey.toString('hex')
+    const tapTweakHashValue = tapTweakHash(internalPubkey, undefined)
+    const verifiedTweakedResult = tweakKey(internalPubkey, undefined)
+    let internalPrivKey = Buffer.from(this._account.privateKey)
+    const internalPubKeyFull = Buffer.from(this._account.publicKey)
+    const secp256k1Order = BigInt('0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141')
+    if ((internalPubKeyFull[0] & 1) === 1) {
+      const internalPrivKeyBigInt = BigInt('0x' + internalPrivKey.toString('hex'))
+      const negatedBigInt = (secp256k1Order - internalPrivKeyBigInt) % secp256k1Order
+      internalPrivKey = Buffer.from(negatedBigInt.toString(16).padStart(64, '0'), 'hex')
+    }
+    const tweakedPrivKeyDirect = Buffer.from(ecc.privateAdd(internalPrivKey, tapTweakHashValue))
+    let tweakedPrivKey
+    if (verifiedTweakedResult.parity === 1) {
+      const tweakedPrivKeyBigInt = BigInt('0x' + tweakedPrivKeyDirect.toString('hex'))
+      const negatedBigInt = (secp256k1Order - tweakedPrivKeyBigInt) % secp256k1Order
+      tweakedPrivKey = Buffer.from(negatedBigInt.toString(16).padStart(64, '0'), 'hex')
+    } else {
+      tweakedPrivKey = tweakedPrivKeyDirect
+    }
+    return {
+      internalPubKeyHex,
+      privateKeyHex,
+      tweakedPrivateKeyHex: tweakedPrivKey.toString('hex'),
+    }
+  }
+
 
   /**
    * Exports Taproot key material as hex.
@@ -559,8 +596,10 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
 
   /**
    * Creates an OP_RETURN script from hex-encoded data.
+   * Script: OP_RETURN (0x6a) + OP_1 (0x51) + push opcode + data.
+   * OP_1 is a script opcode (Spaces numbered-output prefix), not part of the payload.
    *
-   * @param {string} hexData - The hex-encoded data to embed.
+   * @param {string} hexData - The hex-encoded data to embed (wire payload, without OP_1).
    * @returns {Uint8Array} The OP_RETURN script.
    */
   createOpReturnScriptFromHex (hexData) {
@@ -570,9 +609,10 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
 
     const dataBuffer = fromHex(hexData)
     const pushPart = encodeScriptPush(dataBuffer)
-    const script = new Uint8Array(1 + pushPart.length)
+    const script = new Uint8Array(2 + pushPart.length)
     script[0] = 0x6a
-    script.set(pushPart, 1)
+    script[1] = 0x51
+    script.set(pushPart, 2)
     return script
   }
 

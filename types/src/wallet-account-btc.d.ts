@@ -161,8 +161,9 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
     createOpReturnScript(data: string): Uint8Array;
     /**
      * Creates an OP_RETURN script from hex-encoded data.
+     * Script: OP_RETURN (0x6a) + OP_1 (0x51) + push opcode + data.
      *
-     * @param {string} hexData - The hex-encoded data to embed.
+     * @param {string} hexData - The hex-encoded data to embed (wire payload, without OP_1).
      * @returns {Uint8Array} The OP_RETURN script.
      */
     createOpReturnScriptFromHex(hexData: string): Uint8Array;

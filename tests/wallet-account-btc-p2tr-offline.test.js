@@ -53,7 +53,7 @@ describe('WalletAccountBtc P2TR offline', () => {
   test('createOpReturnScript helpers', () => {
     const account = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", CONFIG)
     expect(Buffer.from(account.createOpReturnScript('hi')).toString('hex')).toBe('6a026869')
-    expect(Buffer.from(account.createOpReturnScriptFromHex('dead')).toString('hex')).toBe('6a02dead')
+    expect(Buffer.from(account.createOpReturnScriptFromHex('dead')).toString('hex')).toBe('6a5102dead')
     expect(() => account.createOpReturnScriptFromHex('zz')).toThrow(/hexadecimal/)
     account.dispose()
   })
