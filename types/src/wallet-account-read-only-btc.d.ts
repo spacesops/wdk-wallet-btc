@@ -175,6 +175,74 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
         fee: bigint;
         changeValue: bigint;
     }>;
+    /**
+     * Normalizes and validates payment outputs for multi-output sends.
+     *
+     * @protected
+     * @param {Array<{ address: string, value: number | bigint }>} outputs
+     * @returns {Array<{ address: string, value: bigint }>}
+     */
+    protected _normalizePaymentOutputs(outputs: Array<{
+        address: string;
+        value: number | bigint;
+    }>): Array<{
+        address: string;
+        value: bigint;
+    }>;
+    /**
+     * Builds a fee-aware funding plan for a multi-output send.
+     *
+     * @protected
+     * @param {Object} tx
+     * @param {string} tx.fromAddress
+     * @param {Array<{ address: string, value: number | bigint }>} tx.outputs
+     * @param {number | bigint} tx.feeRate
+     * @returns {Promise<{ utxos: OutputWithValue[], fee: bigint, changeValue: bigint, outputs: Array<{ address: string, value: bigint }> }>}
+     */
+    protected _planSpendWithOutputs({ fromAddress, outputs, feeRate }: {
+        fromAddress: string;
+        outputs: Array<{
+            address: string;
+            value: number | bigint;
+        }>;
+        feeRate: number | bigint;
+    }): Promise<{
+        utxos: OutputWithValue[];
+        fee: bigint;
+        changeValue: bigint;
+        outputs: Array<{
+            address: string;
+            value: bigint;
+        }>;
+    }>;
+    /**
+     * Builds a fee-aware funding plan for a multi-output send with an OP_RETURN memo.
+     *
+     * @protected
+     * @param {Object} tx
+     * @param {string} tx.fromAddress
+     * @param {Array<{ address: string, value: number | bigint }>} tx.outputs
+     * @param {string} tx.memo
+     * @param {number | bigint} tx.feeRate
+     * @returns {Promise<{ utxos: OutputWithValue[], fee: bigint, changeValue: bigint, outputs: Array<{ address: string, value: bigint }> }>}
+     */
+    protected _planSpendWithMemoAndOutputs({ fromAddress, outputs, memo, feeRate }: {
+        fromAddress: string;
+        outputs: Array<{
+            address: string;
+            value: number | bigint;
+        }>;
+        memo: string;
+        feeRate: number | bigint;
+    }): Promise<{
+        utxos: OutputWithValue[];
+        fee: bigint;
+        changeValue: bigint;
+        outputs: Array<{
+            address: string;
+            value: bigint;
+        }>;
+    }>;
 }
 export type MempoolElectrumConfig = import("./transports/index.js").MempoolElectrumConfig;
 export type MempoolElectrumClient = import("./transports/index.js").MempoolElectrumClient;

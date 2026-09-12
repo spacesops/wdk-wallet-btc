@@ -101,6 +101,64 @@ describe('WalletAccountBtc P2TR offline', () => {
     account.dispose()
   })
 
+  test('quoteSendTransactionWithMemoAndOutputsTX builds fixed multi-output payment with memo', async () => {
+    const account = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", CONFIG)
+    const recipient = new WalletAccountBtc(SEED_PHRASE, "0'/0/1", CONFIG)
+    const affiliate = new WalletAccountBtc(SEED_PHRASE, "0'/0/2", CONFIG)
+    const { address } = mockClient(account, { value: 500_000 })
+    const tenantAddress = await recipient.getAddress()
+    const affiliateAddress = await affiliate.getAddress()
+
+    const outputs = [
+      { address, value: 5_000n },
+      { address: affiliateAddress, value: 1_500n },
+      { address: tenantAddress, value: 8_500n }
+    ]
+
+    const hex = await account.quoteSendTransactionWithMemoAndOutputsTX({
+      outputs,
+      memo: 'alice@bitcoinand',
+      feeRate: 1
+    })
+    const tx = Transaction.fromHex(hex)
+
+    expect(tx.outs.some(out => out.script[0] === 0x6a && BigInt(out.value) === 0n)).toBe(true)
+    expect(tx.outs.filter(out => BigInt(out.value) === 5_000n)).toHaveLength(1)
+    expect(tx.outs.filter(out => BigInt(out.value) === 1_500n)).toHaveLength(1)
+    expect(tx.outs.filter(out => BigInt(out.value) === 8_500n)).toHaveLength(1)
+    expect(tx.outs.reduce((sum, out) => sum + BigInt(out.value), 0n)).toBe(15_000n)
+
+    account.dispose()
+    recipient.dispose()
+    affiliate.dispose()
+  })
+
+  test('quoteSendTransactionWithOutputsTX builds fixed dual-output payment without memo', async () => {
+    const account = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", CONFIG)
+    const recipient = new WalletAccountBtc(SEED_PHRASE, "0'/0/1", CONFIG)
+    const { address } = mockClient(account, { value: 300_000 })
+    const tenantAddress = await recipient.getAddress()
+
+    const outputs = [
+      { address, value: 7_000n },
+      { address: tenantAddress, value: 13_000n }
+    ]
+
+    const hex = await account.quoteSendTransactionWithOutputsTX({
+      outputs,
+      feeRate: 1
+    })
+    const tx = Transaction.fromHex(hex)
+
+    expect(tx.outs.some(out => out.script[0] === 0x6a)).toBe(false)
+    expect(tx.outs.filter(out => BigInt(out.value) === 7_000n)).toHaveLength(1)
+    expect(tx.outs.filter(out => BigInt(out.value) === 13_000n)).toHaveLength(1)
+    expect(tx.outs.reduce((sum, out) => sum + BigInt(out.value), 0n)).toBe(20_000n)
+
+    account.dispose()
+    recipient.dispose()
+  })
+
   test('quoteUpdateTransactionWithHexTX signs a two-input compose path', async () => {
     const account = new WalletAccountBtc(SEED_PHRASE, "0'/0/0", CONFIG)
     const prior = new WalletAccountBtc(SEED_PHRASE, "0'/0/1", CONFIG)

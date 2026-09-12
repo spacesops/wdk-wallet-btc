@@ -87,8 +87,10 @@ class TlsSocketWrapper {
   }
 
   connect (port, host, callback) {
+    // SNI (servername) is required for many TLS terminators (e.g. StartOS Frigate).
+    // bare-tls and Node tls both honour servername; host alone is not enough.
     this._socket = this._tls.connect(
-      { port, host, rejectUnauthorized: false },
+      { port, host, servername: host, rejectUnauthorized: false },
       () => callback()
     )
 

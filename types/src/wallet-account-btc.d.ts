@@ -153,6 +153,78 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
         confirmationTarget?: number;
     }): Promise<string>;
     /**
+     * Sends a transaction with multiple payment outputs.
+     *
+     * @param {Object} options - Transaction options.
+     * @param {Array<{ address: string, value: number | bigint }>} options.outputs - Payment outputs in satoshis.
+     * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+     * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+     * @returns {Promise<TransactionResult>} The transaction result.
+     */
+    sendTransactionWithOutputs({ outputs, feeRate, confirmationTarget }: {
+        outputs: Array<{
+            address: string;
+            value: number | bigint;
+        }>;
+        feeRate?: number | bigint;
+        confirmationTarget?: number;
+    }): Promise<TransactionResult>;
+    /**
+     * Builds and signs a multi-output transaction and returns the raw hex without broadcasting.
+     *
+     * @param {Object} options - Transaction options.
+     * @param {Array<{ address: string, value: number | bigint }>} options.outputs - Payment outputs in satoshis.
+     * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+     * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+     * @returns {Promise<string>} The signed raw transaction hex.
+     */
+    quoteSendTransactionWithOutputsTX({ outputs, feeRate, confirmationTarget }: {
+        outputs: Array<{
+            address: string;
+            value: number | bigint;
+        }>;
+        feeRate?: number | bigint;
+        confirmationTarget?: number;
+    }): Promise<string>;
+    /**
+     * Sends a transaction with multiple Taproot payment outputs and an OP_RETURN memo.
+     *
+     * @param {Object} options - Transaction options.
+     * @param {Array<{ address: string, value: number | bigint }>} options.outputs - Payment outputs in satoshis.
+     * @param {string} options.memo - The memo string to embed in OP_RETURN (max 75 bytes UTF-8).
+     * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+     * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+     * @returns {Promise<TransactionResult>} The transaction result.
+     */
+    sendTransactionWithMemoAndOutputs({ outputs, memo, feeRate, confirmationTarget }: {
+        outputs: Array<{
+            address: string;
+            value: number | bigint;
+        }>;
+        memo: string;
+        feeRate?: number | bigint;
+        confirmationTarget?: number;
+    }): Promise<TransactionResult>;
+    /**
+     * Builds and signs a multi-output memo transaction and returns the raw hex without broadcasting.
+     *
+     * @param {Object} options - Transaction options.
+     * @param {Array<{ address: string, value: number | bigint }>} options.outputs - Payment outputs in satoshis.
+     * @param {string} options.memo - The memo string (max 75 bytes UTF-8).
+     * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+     * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+     * @returns {Promise<string>} The signed raw transaction hex.
+     */
+    quoteSendTransactionWithMemoAndOutputsTX({ outputs, memo, feeRate, confirmationTarget }: {
+        outputs: Array<{
+            address: string;
+            value: number | bigint;
+        }>;
+        memo: string;
+        feeRate?: number | bigint;
+        confirmationTarget?: number;
+    }): Promise<string>;
+    /**
      * Creates an OP_RETURN script from a UTF-8 string.
      *
      * @param {string} data - The UTF-8 data to embed.
@@ -162,6 +234,7 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
     /**
      * Creates an OP_RETURN script from hex-encoded data.
      * Script: OP_RETURN (0x6a) + OP_1 (0x51) + push opcode + data.
+     * OP_1 is a script opcode (Spaces numbered-output prefix), not part of the payload.
      *
      * @param {string} hexData - The hex-encoded data to embed (wire payload, without OP_1).
      * @returns {Uint8Array} The OP_RETURN script.
@@ -250,6 +323,13 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc implement
     private _buildMultiAccountTransaction;
     /** @private */
     private _getRawTransaction;
+    /**
+     * Builds and signs a transaction with fixed payment outputs.
+     * Fee shortfall is covered from change only; payment output amounts are never reduced.
+     *
+     * @private
+     */
+    private _getRawTransactionWithOutputs;
     /** @private */
     private _buildSignedTransaction;
 }

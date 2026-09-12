@@ -686,4 +686,222 @@ export default class WalletAccountReadOnlyBtc extends WalletAccountReadOnly {
 
     return { utxos, fee: totalFee, changeValue }
   }
+
+  /**
+   * Normalizes and validates payment outputs for multi-output sends.
+   *
+   * @protected
+   * @param {Array<{ address: string, value: number | bigint }>} outputs
+   * @returns {Array<{ address: string, value: bigint }>}
+   */
+  _normalizePaymentOutputs (outputs) {
+    if (!Array.isArray(outputs) || outputs.length === 0) {
+      throw new Error('outputs must be a non-empty array')
+    }
+
+    const normalized = outputs.map((output, index) => {
+      if (!output || typeof output.address !== 'string' || !output.address.trim()) {
+        throw new Error(`outputs[${index}].address must be a non-empty string`)
+      }
+      const value = this._toBigInt(output.value)
+      if (value <= 0n) {
+        throw new Error(`outputs[${index}].value must be greater than zero`)
+      }
+      if (value <= this._dustLimit) {
+        throw new Error(`outputs[${index}].value must be bigger than the dust limit (= ${this._dustLimit}).`)
+      }
+      return { address: output.address.trim(), value }
+    })
+
+    const total = normalized.reduce((sum, output) => sum + output.value, 0n)
+    if (total <= this._dustLimit) {
+      throw new Error(`The total output amount must be bigger than the dust limit (= ${this._dustLimit}).`)
+    }
+
+    return normalized
+  }
+
+  /**
+   * Builds a fee-aware funding plan for a multi-output send.
+   *
+   * @protected
+   * @param {Object} tx
+   * @param {string} tx.fromAddress
+   * @param {Array<{ address: string, value: number | bigint }>} tx.outputs
+   * @param {number | bigint} tx.feeRate
+   * @returns {Promise<{ utxos: OutputWithValue[], fee: bigint, changeValue: bigint, outputs: Array<{ address: string, value: bigint }> }>}
+   */
+  async _planSpendWithOutputs ({ fromAddress, outputs, feeRate }) {
+    const paymentOutputs = this._normalizePaymentOutputs(outputs)
+    feeRate = this._toBigInt(feeRate)
+    if (feeRate < 1n) feeRate = 1n
+
+    const network = this._network
+    const totalAmount = paymentOutputs.reduce((sum, output) => sum + output.value, 0n)
+
+    const fromAddressScriptHex = toHex(btcAddress.toOutputScript(fromAddress, network))
+    const fromAddressOutput = new Output({ descriptor: `addr(${fromAddress})`, network })
+    const targets = paymentOutputs.map(({ address, value }) => ({
+      output: new Output({ descriptor: `addr(${address})`, network }),
+      value
+    }))
+
+    const unspent = await this._client.listUnspent(fromAddress)
+    if (!unspent || unspent.length === 0) {
+      throw new Error('No unspent outputs available.')
+    }
+
+    const utxosForCoinSelect = unspent.map(u => ({
+      output: fromAddressOutput,
+      value: this._toBigInt(u.value),
+      __ref: u
+    }))
+
+    const result = coinselect({
+      utxos: utxosForCoinSelect,
+      remainder: fromAddressOutput,
+      targets,
+      feeRate: Number(feeRate)
+    })
+
+    if (!result) {
+      throw new Error('Insufficient balance to send the transaction.')
+    }
+
+    if (result.utxos.length > MAX_UTXO_INPUTS) {
+      throw new Error('Exceeded maximum allowed inputs for transaction.')
+    }
+
+    const fee = result.fee > BigInt(MIN_TX_FEE_SATS) ? result.fee : BigInt(MIN_TX_FEE_SATS)
+    const utxos = result.utxos.map(({ __ref }) => ({
+      ...__ref,
+      vout: {
+        value: this._toBigInt(__ref.value),
+        scriptPubKey: { hex: fromAddressScriptHex }
+      }
+    }))
+
+    const inputTotal = utxos.reduce((sum, utxo) => sum + this._toBigInt(utxo.value), 0n)
+    const changeValue = inputTotal - fee - totalAmount
+
+    if (changeValue < 0n) {
+      throw new Error('Insufficient balance after fees.')
+    }
+
+    if (changeValue <= this._dustLimit) {
+      return {
+        utxos,
+        fee: fee + changeValue,
+        changeValue: 0n,
+        outputs: paymentOutputs
+      }
+    }
+
+    return { utxos, fee, changeValue, outputs: paymentOutputs }
+  }
+
+  /**
+   * Builds a fee-aware funding plan for a multi-output send with an OP_RETURN memo.
+   *
+   * @protected
+   * @param {Object} tx
+   * @param {string} tx.fromAddress
+   * @param {Array<{ address: string, value: number | bigint }>} tx.outputs
+   * @param {string} tx.memo
+   * @param {number | bigint} tx.feeRate
+   * @returns {Promise<{ utxos: OutputWithValue[], fee: bigint, changeValue: bigint, outputs: Array<{ address: string, value: bigint }> }>}
+   */
+  async _planSpendWithMemoAndOutputs ({ fromAddress, outputs, memo, feeRate }) {
+    const paymentOutputs = this._normalizePaymentOutputs(outputs)
+    feeRate = this._toBigInt(feeRate)
+    if (feeRate < 1n) feeRate = 1n
+
+    const memoBuffer = Buffer.from(memo, 'utf8')
+    if (memoBuffer.length > 75) {
+      throw new Error('Memo cannot exceed 75 bytes when UTF-8 encoded.')
+    }
+
+    const network = this._network
+    const totalAmount = paymentOutputs.reduce((sum, output) => sum + output.value, 0n)
+
+    const fromAddressScriptHex = toHex(btcAddress.toOutputScript(fromAddress, network))
+    const fromAddressOutput = new Output({ descriptor: `addr(${fromAddress})`, network })
+    const targets = paymentOutputs.map(({ address, value }) => ({
+      output: new Output({ descriptor: `addr(${address})`, network }),
+      value
+    }))
+
+    const unspent = await this._client.listUnspent(fromAddress)
+    if (!unspent || unspent.length === 0) {
+      throw new Error('No unspent outputs available.')
+    }
+
+    const utxosForCoinSelect = unspent.map(u => ({
+      output: fromAddressOutput,
+      value: this._toBigInt(u.value),
+      __ref: u
+    }))
+
+    const opReturnOutputSize = 1 + 1 + memoBuffer.length
+    const coinselectInputBase = {
+      remainder: fromAddressOutput,
+      targets,
+      feeRate: Number(feeRate)
+    }
+
+    let pool = [...utxosForCoinSelect]
+    let selected = null
+    let totalFee = 0n
+    let changeValue = 0n
+
+    while (pool.length > 0 && !selected) {
+      const result = addUntilReach({ ...coinselectInputBase, utxos: pool })
+      if (!result) {
+        break
+      }
+
+      const baseFee = this._toBigInt(result.fee > BigInt(MIN_TX_FEE_SATS) ? result.fee : BigInt(MIN_TX_FEE_SATS))
+      const opReturnFee = this._toBigInt(opReturnOutputSize) * feeRate
+      const candidateTotalFee = baseFee + opReturnFee
+      const candidateTotal = result.utxos.reduce((sum, utxo) => sum + this._toBigInt(utxo.value), 0n)
+      const candidateChange = candidateTotal - candidateTotalFee - totalAmount
+
+      if (candidateChange >= 0n) {
+        selected = result
+        if (candidateChange <= this._dustLimit) {
+          totalFee = candidateTotalFee + candidateChange
+          changeValue = 0n
+        } else {
+          totalFee = candidateTotalFee
+          changeValue = candidateChange
+        }
+        break
+      }
+
+      const minSelected = Math.min(...result.utxos.map(utxo => Number(utxo.value)))
+      const nextPool = pool.filter(utxo => Number(utxo.value) > minSelected)
+      if (nextPool.length === pool.length) {
+        break
+      }
+      pool = nextPool
+    }
+
+    if (!selected) {
+      throw new Error('Insufficient balance to send the transaction.')
+    }
+
+    if (selected.utxos.length > MAX_UTXO_INPUTS) {
+      throw new Error('Exceeded maximum allowed inputs for transaction.')
+    }
+
+    const utxos = selected.utxos.map(({ __ref }) => ({
+      ...__ref,
+      vout: {
+        value: this._toBigInt(__ref.value),
+        scriptPubKey: { hex: fromAddressScriptHex }
+      }
+    }))
+
+    return { utxos, fee: totalFee, changeValue, outputs: paymentOutputs }
+  }
 }

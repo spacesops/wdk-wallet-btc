@@ -160,6 +160,12 @@ function assertTaprootRecipient (to) {
   }
 }
 
+function assertTaprootRecipients (outputs) {
+  for (const output of outputs) {
+    assertTaprootRecipient(output.address)
+  }
+}
+
 /** @implements {IWalletAccount<string>} */
 export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
   /**
@@ -299,43 +305,6 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
   get scriptType () {
     return this._scriptType
   }
-  /**
-   * spaces-wallet-taproot-key-material
-   * Export Taproot internal pubkey + private + tweaked private key as hex.
-   */
-  getTaprootKeyMaterialHex () {
-    if (this._scriptType !== 'P2TR' || !this._account || !this._internalPubkey) {
-      return null
-    }
-    const internalPubkey = Buffer.from(this._internalPubkey)
-    const privateKeyHex = Buffer.from(this._account.privateKey).toString('hex')
-    const internalPubKeyHex = internalPubkey.toString('hex')
-    const tapTweakHashValue = tapTweakHash(internalPubkey, undefined)
-    const verifiedTweakedResult = tweakKey(internalPubkey, undefined)
-    let internalPrivKey = Buffer.from(this._account.privateKey)
-    const internalPubKeyFull = Buffer.from(this._account.publicKey)
-    const secp256k1Order = BigInt('0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141')
-    if ((internalPubKeyFull[0] & 1) === 1) {
-      const internalPrivKeyBigInt = BigInt('0x' + internalPrivKey.toString('hex'))
-      const negatedBigInt = (secp256k1Order - internalPrivKeyBigInt) % secp256k1Order
-      internalPrivKey = Buffer.from(negatedBigInt.toString(16).padStart(64, '0'), 'hex')
-    }
-    const tweakedPrivKeyDirect = Buffer.from(ecc.privateAdd(internalPrivKey, tapTweakHashValue))
-    let tweakedPrivKey
-    if (verifiedTweakedResult.parity === 1) {
-      const tweakedPrivKeyBigInt = BigInt('0x' + tweakedPrivKeyDirect.toString('hex'))
-      const negatedBigInt = (secp256k1Order - tweakedPrivKeyBigInt) % secp256k1Order
-      tweakedPrivKey = Buffer.from(negatedBigInt.toString(16).padStart(64, '0'), 'hex')
-    } else {
-      tweakedPrivKey = tweakedPrivKeyDirect
-    }
-    return {
-      internalPubKeyHex,
-      privateKeyHex,
-      tweakedPrivateKeyHex: tweakedPrivKey.toString('hex'),
-    }
-  }
-
 
   /**
    * Exports Taproot key material as hex.
@@ -570,6 +539,170 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
       utxos,
       to,
       value,
+      fee,
+      feeRate,
+      changeValue,
+      additionalOutputs: [{ script: opReturnScript, value: 0n }]
+    })
+
+    return tx.hex
+  }
+
+  /**
+   * Sends a transaction with multiple payment outputs.
+   *
+   * @param {Object} options - Transaction options.
+   * @param {Array<{ address: string, value: number | bigint }>} options.outputs - Payment outputs in satoshis.
+   * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+   * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+   * @returns {Promise<TransactionResult>} The transaction result.
+   */
+  async sendTransactionWithOutputs ({ outputs, feeRate, confirmationTarget = 1 }) {
+    await this._ensureConnected()
+
+    const address = await this.getAddress()
+    if (!feeRate) {
+      const feeEstimate = await this._client.estimateFee(confirmationTarget)
+      feeRate = this._toBigInt(Math.max(feeEstimate * 100_000, 1))
+    }
+
+    const { utxos, fee, changeValue, outputs: paymentOutputs } = await this._planSpendWithOutputs({
+      fromAddress: address,
+      outputs,
+      feeRate
+    })
+
+    if (this._config.transactionMaxFee !== undefined && fee > this._config.transactionMaxFee) {
+      throw new Error('Exceeded maximum fee cost for transaction operation.')
+    }
+
+    const tx = await this._getRawTransactionWithOutputs({
+      utxos,
+      outputs: paymentOutputs,
+      fee,
+      feeRate,
+      changeValue
+    })
+
+    await this._client.broadcast(tx.hex)
+
+    return { hash: tx.txid, fee: tx.fee }
+  }
+
+  /**
+   * Builds and signs a multi-output transaction and returns the raw hex without broadcasting.
+   *
+   * @param {Object} options - Transaction options.
+   * @param {Array<{ address: string, value: number | bigint }>} options.outputs - Payment outputs in satoshis.
+   * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+   * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+   * @returns {Promise<string>} The signed raw transaction hex.
+   */
+  async quoteSendTransactionWithOutputsTX ({ outputs, feeRate, confirmationTarget = 1 }) {
+    await this._ensureConnected()
+
+    const address = await this.getAddress()
+    if (!feeRate) {
+      const feeEstimate = await this._client.estimateFee(confirmationTarget)
+      feeRate = this._toBigInt(Math.max(feeEstimate * 100_000, 1))
+    }
+
+    const { utxos, fee, changeValue, outputs: paymentOutputs } = await this._planSpendWithOutputs({
+      fromAddress: address,
+      outputs,
+      feeRate
+    })
+
+    const tx = await this._getRawTransactionWithOutputs({
+      utxos,
+      outputs: paymentOutputs,
+      fee,
+      feeRate,
+      changeValue
+    })
+
+    return tx.hex
+  }
+
+  /**
+   * Sends a transaction with multiple Taproot payment outputs and an OP_RETURN memo.
+   *
+   * @param {Object} options - Transaction options.
+   * @param {Array<{ address: string, value: number | bigint }>} options.outputs - Payment outputs in satoshis.
+   * @param {string} options.memo - The memo string to embed in OP_RETURN (max 75 bytes UTF-8).
+   * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+   * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+   * @returns {Promise<TransactionResult>} The transaction result.
+   */
+  async sendTransactionWithMemoAndOutputs ({ outputs, memo, feeRate, confirmationTarget = 1 }) {
+    const paymentOutputs = this._normalizePaymentOutputs(outputs)
+    assertTaprootRecipients(paymentOutputs)
+    await this._ensureConnected()
+
+    const address = await this.getAddress()
+    if (!feeRate) {
+      const feeEstimate = await this._client.estimateFee(confirmationTarget)
+      feeRate = this._toBigInt(Math.max(feeEstimate * 100_000, 1))
+    }
+
+    const { utxos, fee, changeValue, outputs: normalizedOutputs } = await this._planSpendWithMemoAndOutputs({
+      fromAddress: address,
+      outputs: paymentOutputs,
+      memo,
+      feeRate
+    })
+
+    if (this._config.transactionMaxFee !== undefined && fee > this._config.transactionMaxFee) {
+      throw new Error('Exceeded maximum fee cost for transaction operation.')
+    }
+
+    const opReturnScript = this.createOpReturnScript(memo)
+    const tx = await this._getRawTransactionWithOutputs({
+      utxos,
+      outputs: normalizedOutputs,
+      fee,
+      feeRate,
+      changeValue,
+      additionalOutputs: [{ script: opReturnScript, value: 0n }]
+    })
+
+    await this._client.broadcast(tx.hex)
+
+    return { hash: tx.txid, fee: tx.fee }
+  }
+
+  /**
+   * Builds and signs a multi-output memo transaction and returns the raw hex without broadcasting.
+   *
+   * @param {Object} options - Transaction options.
+   * @param {Array<{ address: string, value: number | bigint }>} options.outputs - Payment outputs in satoshis.
+   * @param {string} options.memo - The memo string (max 75 bytes UTF-8).
+   * @param {number | bigint} [options.feeRate] - Optional fee rate (in sats/vB).
+   * @param {number} [options.confirmationTarget] - Optional confirmation target in blocks (default: 1).
+   * @returns {Promise<string>} The signed raw transaction hex.
+   */
+  async quoteSendTransactionWithMemoAndOutputsTX ({ outputs, memo, feeRate, confirmationTarget = 1 }) {
+    const paymentOutputs = this._normalizePaymentOutputs(outputs)
+    assertTaprootRecipients(paymentOutputs)
+    await this._ensureConnected()
+
+    const address = await this.getAddress()
+    if (!feeRate) {
+      const feeEstimate = await this._client.estimateFee(confirmationTarget)
+      feeRate = this._toBigInt(Math.max(feeEstimate * 100_000, 1))
+    }
+
+    const { utxos, fee, changeValue, outputs: normalizedOutputs } = await this._planSpendWithMemoAndOutputs({
+      fromAddress: address,
+      outputs: paymentOutputs,
+      memo,
+      feeRate
+    })
+
+    const opReturnScript = this.createOpReturnScript(memo)
+    const tx = await this._getRawTransactionWithOutputs({
+      utxos,
+      outputs: normalizedOutputs,
       fee,
       feeRate,
       changeValue,
@@ -1297,6 +1430,108 @@ export default class WalletAccountBtc extends WalletAccountReadOnlyBtc {
     vsize = tx.virtualSize()
     requiredFee = BigInt(vsize) * feeRate
     if (requiredFee > fee) throw new Error('Fee shortfall after output rebalance.')
+
+    return { txid: tx.getId(), hex: tx.toHex(), fee, vsize }
+  }
+
+  /**
+   * Builds and signs a transaction with fixed payment outputs.
+   * Fee shortfall is covered from change only; payment output amounts are never reduced.
+   *
+   * @private
+   */
+  async _getRawTransactionWithOutputs ({ utxos, outputs, fee, feeRate, changeValue, additionalOutputs = [] }) {
+    feeRate = this._toBigInt(feeRate)
+    if (feeRate < 1n) feeRate = 1n
+    fee = this._toBigInt(fee)
+    changeValue = this._toBigInt(changeValue)
+
+    const paymentOutputs = this._normalizePaymentOutputs(outputs)
+
+    const legacyPrevTxCache = new Map()
+    const getPrevTxHex = async (txid) => {
+      if (legacyPrevTxCache.has(txid)) return legacyPrevTxCache.get(txid)
+      const hex = await this._client.getTransaction(txid)
+      legacyPrevTxCache.set(txid, hex)
+      return hex
+    }
+
+    const buildAndSign = async (chgVal) => {
+      if (!this._masterNode || !this._account) {
+        throw new Error('Wallet account has been disposed or not properly initialized. Cannot build transaction.')
+      }
+
+      if (this._scriptType === 'P2TR') {
+        if (!this._internalPubkey || this._internalPubkey.length !== 32) {
+          throw new Error('P2TR wallet not properly initialized. Internal public key is missing or invalid.')
+        }
+      }
+
+      const psbt = new Psbt({ network: this._network })
+
+      for (const utxo of utxos) {
+        await WalletAccountBtc._addAccountInput(this, psbt, utxo, getPrevTxHex)
+      }
+
+      for (const output of paymentOutputs) {
+        psbt.addOutput({ address: output.address, value: output.value })
+      }
+
+      for (const output of additionalOutputs) {
+        if (output.script) {
+          if (output.value !== 0 && output.value !== 0n) {
+            throw new Error('OP_RETURN outputs must have value 0')
+          }
+          psbt.addOutput({ script: output.script, value: 0n })
+        } else if (output.address) {
+          psbt.addOutput({
+            address: output.address,
+            value: this._toBigInt(output.value)
+          })
+        } else {
+          throw new Error('Additional output must have either "script" or "address" property')
+        }
+      }
+
+      if (chgVal > 0n) {
+        psbt.addOutput({ address: await this.getAddress(), value: chgVal })
+      }
+
+      for (let index = 0; index < utxos.length; index++) {
+        WalletAccountBtc._signAccountInput(this, psbt, index)
+      }
+
+      psbt.finalizeAllInputs()
+      return psbt.extractTransaction()
+    }
+
+    let currentChange = changeValue
+    let tx = await buildAndSign(currentChange)
+    let vsize = tx.virtualSize()
+    let requiredFee = BigInt(vsize) * feeRate
+
+    if (requiredFee <= fee) {
+      return { txid: tx.getId(), hex: tx.toHex(), fee, vsize }
+    }
+
+    const dustLimit = this._dustLimit
+    const delta = requiredFee - fee
+    fee = requiredFee
+
+    if (currentChange > 0n) {
+      let newChange = currentChange - delta
+      if (newChange <= dustLimit) newChange = 0n
+      currentChange = newChange
+      tx = await buildAndSign(currentChange)
+    } else {
+      throw new Error('Insufficient balance after fees.')
+    }
+
+    vsize = tx.virtualSize()
+    requiredFee = BigInt(vsize) * feeRate
+    if (requiredFee > fee) {
+      throw new Error('Fee shortfall after output rebalance.')
+    }
 
     return { txid: tx.getId(), hex: tx.toHex(), fee, vsize }
   }

@@ -77,7 +77,12 @@ describe('TlsSocketWrapper (Bare / Node TLS surface)', () => {
       wrapper.connect(50002, 'example.com', () => {
         try {
           expect(tls.connect).toHaveBeenCalledWith(
-            { port: 50002, host: 'example.com', rejectUnauthorized: false },
+            {
+              port: 50002,
+              host: 'example.com',
+              servername: 'example.com',
+              rejectUnauthorized: false
+            },
             expect.any(Function)
           )
           expect(underlay.setTimeout).toHaveBeenCalledWith(60_000)

@@ -16,5 +16,8 @@ socket throws (`setTimeout is not a function`) and breaks Electrum over TLS.
 otherwise to the TCP underlay — matching Node behaviour without runtime
 monkey-patches of `node_modules`.
 
+It also passes **`servername: host`** on `tls.connect()` so SNI works with
+reverse proxies (e.g. StartOS Frigate on port 50002).
+
 Other files are unmodified copies of 1.1.9 (renamed to `.cjs` because this
 package is `"type": "module"`).
